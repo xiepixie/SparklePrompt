@@ -249,7 +249,13 @@ final class SparklePromptViewModel: ObservableObject {
             } else {
                 showControls = true
             }
-            if !isInternalLoading { saveSubject.send() }
+            if !isInternalLoading {
+                // ⚡️ 立即同步写入 isPrivacyMode，不走 debounce 管线
+                // 防止 setStealthMode 触发 UserDefaults.didChangeNotification
+                // 在 saveSubject debounce 完成前读取到旧值并覆盖回来
+                UserDefaults.standard.set(isPrivacyMode, forKey: "Pref_isPrivacyMode")
+                saveSubject.send()
+            }
         }
     }
 
@@ -1472,8 +1478,8 @@ final class SparklePromptViewModel: ObservableObject {
         if ghostModeTimeRemaining > 0 { return }
 
         let now = Date()
-        // 🛡️ 状态切换冷却保护：0.5 秒内禁止连续切换，防止键盘抖动或快速连击导致状态回弹
-        if now.timeIntervalSince(lastPrivacyTransitionTime) < 0.5 {
+        // 🛡️ 状态切换冷却保护：0.35 秒内禁止连续切换，防止窗口激活/键轴抖动导致状态回弹
+        if now.timeIntervalSince(lastPrivacyTransitionTime) < 0.35 {
             return
         }
 
@@ -2382,8 +2388,13 @@ final class SparklePromptViewModel: ObservableObject {
            let nsColor = NSColor(hex: aiAccentColorHex) {
             self.accentColor = Color(nsColor)
         }
-        if let isPrivacy = UserDefaults.standard.object(forKey: "Pref_isPrivacyMode") as? Bool {
-            self.isPrivacyMode = isPrivacy
+        // ⚡️ isPrivacyMode 只在初始化时从 UserDefaults 恢复
+        // 运行时由 UserDefaults.didChangeNotification 触发的 reload 不得覆盖
+        // 否则会因 save debounce（1s）> notification debounce（500ms）导致状态回弹
+        if !hasCompletedInitialLoad {
+            if let isPrivacy = UserDefaults.standard.object(forKey: "Pref_isPrivacyMode") as? Bool {
+                self.isPrivacyMode = isPrivacy
+            }
         }
         if let onTop = UserDefaults.standard.object(forKey: "Pref_alwaysOnTop") as? Bool {
             self.alwaysOnTop = onTop
