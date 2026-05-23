@@ -320,8 +320,8 @@ final class SparklePromptViewModel: ObservableObject {
 
         ghostPrepTimer?.invalidate()
         ghostPrepTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
             Task { @MainActor in
-                guard let self = self else { return }
                 if self.ghostModeCountdown > 1 {
                     self.ghostModeCountdown -= 1
                 } else {
@@ -366,8 +366,8 @@ final class SparklePromptViewModel: ObservableObject {
 
         ghostRunTimer?.invalidate()
         ghostRunTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
             Task { @MainActor in
-                guard let self = self else { return }
                 if self.ghostModeTimeRemaining > 1 {
                     self.ghostModeTimeRemaining -= 1
                 } else {
@@ -650,6 +650,12 @@ final class SparklePromptViewModel: ObservableObject {
             .store(in: &cancellables)
 
         updateAttributedText()
+    }
+
+    deinit {
+        ghostPrepTimer?.invalidate()
+        ghostRunTimer?.invalidate()
+        speechTimer?.invalidate()
     }
 
     private func updateAttributedText() {
@@ -1515,8 +1521,9 @@ final class SparklePromptViewModel: ObservableObject {
         isTimerActive = true
         speechTimer?.invalidate()
         speechTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
             Task { @MainActor in
-                self?.timerElapsedTime += 1
+                self.timerElapsedTime += 1
             }
         }
     }

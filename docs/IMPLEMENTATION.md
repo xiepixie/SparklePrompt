@@ -44,8 +44,23 @@ flowchart TD
   movable-by-background, hidden titlebar controls, clear background, no shadow.
 - Applies capture protection through `window.sharingType`.
 - Applies privacy/stealth behavior through `NSApp.setActivationPolicy`.
+- Release app bundles are generated with `LSUIElement = true`, so the process
+  starts as an agent app before AppKit can show a Dock/menu-bar presence.
 - Keeps a stable `baseWindowWidth` so opening and closing the script library
   expands the window without shrinking the main prompt area.
+
+Startup is split by the persisted `Pref_isPrivacyMode` value loaded by
+`SparklePromptViewModel` before any window is shown:
+
+- Private startup keeps `.accessory`, applies `.none` capture protection and
+  `.mainMenu` level first, then shows the panel with `orderFrontRegardless()`
+  without activating the app or making the window key.
+- Normal startup switches to `.regular`, applies normal capture/window level,
+  then uses `makeKeyAndOrderFront` and `NSApp.activate`.
+
+`swift run` does not use the generated bundle `Info.plist`, so it cannot verify
+Dock zero-flash behavior. Use a `.app` from `build-app.sh` or
+`package-release.sh` for that path.
 
 `SparklePromptWindow` is the concrete `NSPanel` subclass. It can become key,
 cannot become main, and suppresses the default Esc-to-close behavior.

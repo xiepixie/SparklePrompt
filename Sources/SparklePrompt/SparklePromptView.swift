@@ -57,19 +57,34 @@ struct SparklePromptView: View {
                     }
                     .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                           removal: .opacity))
-                } else {
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            Text("Press H for controls")
-                                .font(.caption)
-                                .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.hintOpacity))
-                                .padding(.bottom, 12)
-                                .padding(.trailing, 16)
-                        }
-                    }
-                }
+                  } else {
+                      VStack {
+                          Spacer()
+                          HStack {
+                              Spacer()
+                              if viewModel.isPrivacyMode {
+                                  Button(action: { viewModel.showSettings = true }) {
+                                      Image(systemName: "shield.fill")
+                                          .font(.system(size: 12, weight: .semibold))
+                                          .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.28))
+                                          .frame(width: 28, height: 28)
+                                          .background(
+                                              viewModel.presentationStyle.secondaryTextColor.opacity(0.04),
+                                              in: Circle()
+                                          )
+                                  }
+                                  .buttonStyle(.plain)
+                                  .help("隐私设置")
+                              } else {
+                                  Text("Press H for controls")
+                                      .font(.caption)
+                                      .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.hintOpacity))
+                              }
+                          }
+                          .padding(.bottom, 12)
+                          .padding(.trailing, 16)
+                      }
+                  }
 
                 if viewModel.isEditing {
                     EditorOverlay(viewModel: viewModel)
@@ -1247,6 +1262,7 @@ private func clickableNoContextTag(viewModel: SparklePromptViewModel) -> some Vi
     .help("点击开启背景资料")
 }
 
+@MainActor
 private func showRenameAlert(initialTitle: String, completion: @escaping (String) -> Void) {
     let alert = NSAlert()
     alert.messageText = "重命名剧本"

@@ -22,8 +22,8 @@ final class KeyHandlingView: NSView {
             setupMonitors(viewModel != nil)
         }
     }
-    private var monitor: Any?
-    private var scrollMonitor: Any?
+    private nonisolated(unsafe) var monitor: Any?
+    private nonisolated(unsafe) var scrollMonitor: Any?
 
     private struct KeySignature: Equatable {
         let keyCode: UInt16
@@ -55,8 +55,10 @@ final class KeyHandlingView: NSView {
         super.viewDidMoveToWindow()
         if let window = window {
             window.makeFirstResponder(self)
-            // 确保窗口是主窗口，否则监听器可能无法工作
-            if NSApp.isActive {
+            // Normal mode can claim key focus for local shortcuts; privacy mode must stay non-activating.
+            let isStealthWindow = (window as? SparklePromptWindow)?.isStealthMode ?? false
+            let isPrivacyMode = viewModel?.isPrivacyMode == true
+            if NSApp.isActive && !isStealthWindow && !isPrivacyMode {
                 window.makeKeyAndOrderFront(self)
             }
             setupMonitors(viewModel != nil)

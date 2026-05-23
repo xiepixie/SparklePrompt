@@ -23,8 +23,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// It is NEVER modified during programmatic sidebar toggle animations.
     private var baseWindowWidth: CGFloat = 620
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Release bundles start as LSUIElement agent apps, so decide the visible
+        // app identity before any window can appear.
+        NSApp.setActivationPolicy(viewModel.isPrivacyMode ? .accessory : .regular)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 移除冗余的 .regular 设置，由 setStealthMode 统一在末尾决定初始状态
+        let startsPrivate = viewModel.isPrivacyMode
 
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
@@ -48,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         (window as? NSPanel)?.becomesKeyOnlyIfNeeded = false
         (window as? NSPanel)?.hidesOnDeactivate = false
+        (window as? SparklePromptWindow)?.isStealthMode = startsPrivate
 
         // 强制禁用窗口状态恢复，确保设置的初始尺寸生效
         window.isRestorable = false
@@ -63,9 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.isMovableByWindowBackground = true
-        window.level = viewModel.alwaysOnTop ? .floating : .normal
+        window.level = startsPrivate ? .mainMenu : (viewModel.alwaysOnTop ? .floating : .normal)
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        window.sharingType = viewModel.isPrivacyMode ? .none : .readOnly
+        window.sharingType = startsPrivate ? .none : .readOnly
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
@@ -78,15 +85,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.autoresizingMask = [.width, .height]
         window.contentView = host
 
-        window.makeKeyAndOrderFront(nil)
         window.delegate = self
         baseWindowWidth = defaultWidth
 
-        // ✨ 应用初始隐私防护状态
-        setStealthMode(viewModel.isPrivacyMode)
+        // Apply capture/stealth policy before the first visible frame.
+        setHideFromCapture(startsPrivate)
+        setStealthMode(startsPrivate)
 
-        // 隐私模式下不激活应用，避免暴露
-        if !viewModel.isPrivacyMode {
+        if startsPrivate {
+            window.orderFrontRegardless()
+        } else {
+            window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
     }

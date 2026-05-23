@@ -111,6 +111,9 @@ Privacy mode combines capture exclusion and stealthier app activation:
 - The app switches to `.accessory` activation policy, hiding it from the Dock.
 - Always-on-top is forced while privacy mode is active.
 - The presentation style becomes lower-contrast and can apply blur.
+- Release `.app` bundles start as an agent app (`LSUIElement`) so a persisted
+  privacy-mode launch can apply capture protection before the first visible
+  frame.
 
 Ghost Mode is a stricter temporary session. It starts with a 3-second countdown,
 then enables mouse click-through, privacy mode, and always-on-top while the

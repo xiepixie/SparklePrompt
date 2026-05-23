@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 /// A modern, thread-safe wrapper for the macOS Keychain.
-final class KeychainHelper {
+final class KeychainHelper: Sendable {
     static let shared = KeychainHelper()
     private init() {}
 
