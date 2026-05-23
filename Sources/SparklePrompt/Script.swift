@@ -7,7 +7,7 @@ struct Workspace: Identifiable, Equatable, Hashable, Codable {
     var isExpanded: Bool = true
     var folderURL: URL?          // 兼容旧数据 & 运行时解析后的 URL
     var folderBookmark: Data?    // ✨ 持久化的文件夹引用（Bookmark）
-    
+
     /// 通过 Bookmark 解析文件夹的当前位置，自动处理重命名/移动
     mutating func resolveFolderURL() -> URL? {
         // 优先使用 Bookmark
@@ -33,11 +33,11 @@ struct Workspace: Identifiable, Equatable, Hashable, Codable {
         // 降级使用 URL（兼容旧数据）
         return folderURL
     }
-    
+
     /// 检查关联的物理文件夹是否仍然存在于磁盘上（更智能的判定）
     var isFolderMissing: Bool {
         guard folderURL != nil || folderBookmark != nil else { return false }
-        
+
         // 1. 如果当前的 URL 还在，直接返回
         if let url = folderURL {
             var isDir: ObjCBool = false
@@ -45,7 +45,7 @@ struct Workspace: Identifiable, Equatable, Hashable, Codable {
                 return false
             }
         }
-        
+
         // 2. 如果当前 URL 失效，尝试用 Bookmark 默默解析一下（不更新状态，仅做判定）
         if let data = folderBookmark {
             var isStale = false
@@ -56,10 +56,10 @@ struct Workspace: Identifiable, Equatable, Hashable, Codable {
                 }
             }
         }
-        
+
         return true
     }
-    
+
     /// 创建 Workspace 时自动生成 Bookmark
     init(id: UUID = UUID(), name: String, scripts: [Script], isExpanded: Bool = true, folderURL: URL? = nil) {
         self.id = id

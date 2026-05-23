@@ -88,7 +88,7 @@ struct SparklePromptView: View {
             .animation(.easeInOut(duration: 0.2), value: viewModel.showControls)
             .animation(.easeInOut(duration: 0.2), value: viewModel.isEditing)
             .animation(.easeInOut(duration: 0.2), value: viewModel.showSettings)
-            
+
             // Sidebar — fixed width, sits to the right of main content in HStack.
             // The AppKit window expansion provides the visual animation.
             // SwiftUI just instantly shows/hides within the available space.
@@ -244,96 +244,145 @@ private struct AIPromptBar: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                // 🧠 AI Context Bar: Shows current settings to the user
+                // 1. Header: Title, role/model tags, and close button
                 HStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .foregroundColor(viewModel.presentationStyle.accentColor)
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Sparkle AI")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor)
+                    }
+
+                    Spacer()
+
                     let roleName = viewModel.aiRoles.indices.contains(viewModel.selectedRoleIndex) ? viewModel.aiRoles[viewModel.selectedRoleIndex].name : "未知角色"
                     labelTag(text: roleName, icon: "person.fill")
                     labelTag(text: viewModel.cleanedModelName, icon: "cpu.fill")
-                    
-                    if viewModel.useAnyContextForAI {
-                        if viewModel.useWorkspaceContextForAI {
-                            clickableContextTag(text: "工作区全量", icon: "folder.fill", viewModel: viewModel)
-                        } else {
-                            clickableContextTag(text: viewModel.currentScriptNameShort, icon: "doc.text.fill", viewModel: viewModel)
-                        }
-                    } else {
-                        clickableNoContextTag(viewModel: viewModel)
-                    }
-                    
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                        .foregroundColor(viewModel.presentationStyle.accentColor)
-                        .font(.system(size: 16, weight: .bold))
-
-                    ZStack(alignment: .topLeading) {
-                        if viewModel.aiPrompt.isEmpty {
-                            Text("输入问题...")
-                                .font(.system(size: 16))
-                                .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.4))
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 8)
-                        }
-                        
-                        TextEditor(text: $viewModel.aiPrompt)
-                            .font(.system(size: 16))
-                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor)
-                            .scrollContentBackground(.hidden)
-                            .background(Color.clear)
-                            .frame(minHeight: 40, maxHeight: 120)
-                            .tint(viewModel.presentationStyle.accentColor)
-                            .focused($isFocused)
-                            .onKeyPress { keyPress in
-                                if keyPress.key == .return {
-                                    if keyPress.modifiers.contains(.shift) {
-                                        // Shift+Enter: 换行
-                                        return .ignored
-                                    } else {
-                                        // Enter: 发送消息
-                                        viewModel.submitAIPrompt()
-                                        return .handled
-                                    }
-                                }
-                                return .ignored
-                            }
-                    }
-
-                    if !viewModel.aiPrompt.isEmpty {
-                        Button(action: { viewModel.submitAIPrompt() }) {
-                            Image(systemName: "paperplane.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(viewModel.presentationStyle.accentColor)
-                        }
-                        .buttonStyle(.borderless)
-                    }
 
                     Button(action: { viewModel.showAIPromptBar = false }) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.hintOpacity))
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.5))
+                            .frame(width: 20, height: 20)
+                            .background(Color.white.opacity(0.08))
+                            .clipShape(Circle())
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 10)
+
+                // 2. Input Box: TextEditor styled with rounded border and subtle background, focused style
+                ZStack(alignment: .topLeading) {
+                    if viewModel.aiPrompt.isEmpty {
+                        Text("给 AI 发送指令，定制生成剧本或修改文本...")
+                            .font(.system(size: 13))
+                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.35))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextEditor(text: $viewModel.aiPrompt)
+                        .font(.system(size: 13))
+                        .foregroundColor(viewModel.presentationStyle.secondaryTextColor)
+                        .scrollContentBackground(.hidden)
+                        .background(Color.clear)
+                        .frame(minHeight: 50, maxHeight: 120)
+                        .tint(viewModel.presentationStyle.accentColor)
+                        .focused($isFocused)
+                        .background(TextViewIntrospector { textView in
+                            textView.textContainerInset = .zero
+                            textView.textContainer?.lineFragmentPadding = 0
+                        })
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .onKeyPress { keyPress in
+                            if keyPress.key == .return {
+                                if keyPress.modifiers.contains(.shift) {
+                                    return .ignored
+                                } else {
+                                    viewModel.submitAIPrompt()
+                                    return .handled
+                                }
+                            }
+                            return .ignored
+                        }
+                }
+                .background(viewModel.isPrivacyMode ? Color.clear : Color.black.opacity(0.25))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(isFocused ? viewModel.presentationStyle.accentColor.opacity(viewModel.isPrivacyMode ? 0.0 : 0.7) : Color.white.opacity(viewModel.presentationStyle.panelBorderOpacity * 0.8), lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+
+                // 3. Footer: Context toggle on the left, Send/Submit action on the right
+                HStack {
+                    HStack(spacing: 8) {
+                        Text("背景上下文:")
+                            .font(.system(size: 10))
+                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.isPrivacyMode ? 0.25 : 0.4))
+
+                        if viewModel.useAnyContextForAI {
+                            if viewModel.useWorkspaceContextForAI {
+                                clickableContextTag(text: "工作区全量", icon: "folder.fill", viewModel: viewModel)
+                            } else {
+                                clickableContextTag(text: viewModel.currentScriptNameShort, icon: "doc.text.fill", viewModel: viewModel)
+                            }
+                        } else {
+                            clickableNoContextTag(viewModel: viewModel)
+                        }
+                    }
+
+                    Spacer()
+
+                    Button(action: { viewModel.submitAIPrompt() }) {
+                        HStack(spacing: 6) {
+                            Text("发送")
+                                .font(.system(size: 11, weight: .bold))
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundColor(
+                            viewModel.isPrivacyMode
+                                ? viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.aiPrompt.isEmpty ? 0.2 : 0.45)
+                                : (viewModel.aiPrompt.isEmpty ? viewModel.presentationStyle.secondaryTextColor.opacity(0.3) : .white)
+                        )
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(
+                            viewModel.isPrivacyMode
+                                ? (viewModel.aiPrompt.isEmpty ? Color.clear : viewModel.presentationStyle.secondaryTextColor.opacity(0.08))
+                                : (viewModel.aiPrompt.isEmpty ? viewModel.presentationStyle.secondaryTextColor.opacity(0.08) : viewModel.presentationStyle.accentColor)
+                        )
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.aiPrompt.isEmpty)
+                    .animation(.easeInOut(duration: 0.15), value: viewModel.aiPrompt.isEmpty)
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 14)
             }
-            .padding(16)
-            .background { PanelBackground(bgOpacity: viewModel.bgOpacity, style: viewModel.presentationStyle, usesMaterial: false) }
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background { PanelBackground(bgOpacity: viewModel.bgOpacity, style: viewModel.presentationStyle, usesMaterial: !viewModel.isPrivacyMode) }
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(Color.white.opacity(viewModel.presentationStyle.panelBorderOpacity), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(viewModel.presentationStyle.shadowOpacity), radius: viewModel.presentationStyle.shadowRadius * 8, x: 0, y: viewModel.presentationStyle.shadowYOffset * 6)
+            .shadow(color: .black.opacity(viewModel.presentationStyle.shadowOpacity * 0.8), radius: viewModel.presentationStyle.shadowRadius * 6, x: 0, y: viewModel.presentationStyle.shadowYOffset * 4)
+            .opacity(viewModel.presentationStyle.panelOpacityMultiplier)
             .blur(radius: viewModel.presentationStyle.blurRadius)
             .frame(maxWidth: 600)
             .padding(.horizontal, 20)
             .padding(.top, 16)
             .onChange(of: viewModel.showAIPromptBar) { _, newValue in
                 if newValue {
-                    // 延迟设置焦点，避免干扰动画和滚动
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         isFocused = true
                     }
@@ -349,7 +398,7 @@ private struct AIPromptBar: View {
                     Text(viewModel.aiErrorMessage)
                         .font(.caption)
                         .foregroundColor(viewModel.isPrivacyMode ? viewModel.presentationStyle.secondaryTextColor : .orange)
-                        .lineLimit(2) // Error messages can have 2 lines
+                        .lineLimit(2)
                         .truncationMode(.tail)
                     Spacer()
                 }
@@ -359,18 +408,35 @@ private struct AIPromptBar: View {
         }
         .onAppear { isFocused = true }
     }
-    
+
     private func labelTag(text: String, icon: String) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
             Text(text)
         }
-        .font(.system(size: 9, weight: .bold))
+        .font(.system(size: 10, weight: .medium))
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.white.opacity(viewModel.presentationStyle.subtleFillOpacity))
-        .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.isPrivacyMode ? 0.95 : 0.7))
+        .padding(.vertical, 3)
+        .background(
+            viewModel.isPrivacyMode
+                ? viewModel.presentationStyle.secondaryTextColor.opacity(0.04)
+                : viewModel.presentationStyle.accentColor.opacity(0.12)
+        )
+        .foregroundColor(
+            viewModel.isPrivacyMode
+                ? viewModel.presentationStyle.secondaryTextColor.opacity(0.35)
+                : viewModel.presentationStyle.accentColor
+        )
         .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .stroke(
+                    viewModel.isPrivacyMode
+                        ? Color.clear
+                        : viewModel.presentationStyle.accentColor.opacity(0.25),
+                    lineWidth: viewModel.isPrivacyMode ? 0 : 0.5
+                )
+        )
     }
 }
 
@@ -383,7 +449,11 @@ private struct AIStreamingBanner: View {
     var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(viewModel.autoFollowEnabled ? viewModel.presentationStyle.accentColor : Color.gray)
+                .fill(
+                    viewModel.isPrivacyMode
+                        ? viewModel.presentationStyle.secondaryTextColor.opacity(0.3)
+                        : (viewModel.autoFollowEnabled ? viewModel.presentationStyle.accentColor : Color.gray)
+                )
                 .frame(width: 8, height: 8)
                 .scaleEffect(pulse ? 1.3 : 0.8)
                 .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
@@ -395,18 +465,27 @@ private struct AIStreamingBanner: View {
                 .truncationMode(.tail)
 
             Spacer()
-            
+
             if !viewModel.autoFollowEnabled {
-                Button(action: { 
-                    viewModel.autoFollowEnabled = true 
+                Button(action: {
+                    viewModel.autoFollowEnabled = true
                     viewModel.scrollToBottom()
                 }) {
                     Label("恢复追随", systemImage: "arrow.down.to.line.compact")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(viewModel.presentationStyle.accentColor)
+                        .foregroundColor(
+                            viewModel.isPrivacyMode
+                                ? viewModel.presentationStyle.secondaryTextColor.opacity(0.45)
+                                : viewModel.presentationStyle.accentColor
+                        )
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(viewModel.presentationStyle.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                        .background(
+                            viewModel.isPrivacyMode
+                                ? viewModel.presentationStyle.secondaryTextColor.opacity(0.06)
+                                : viewModel.presentationStyle.accentColor.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
                 }
                 .buttonStyle(.borderless)
             }
@@ -414,10 +493,19 @@ private struct AIStreamingBanner: View {
             Button(action: { viewModel.cancelAIGeneration() }) {
                 Text("停止")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.red)
+                    .foregroundColor(
+                        viewModel.isPrivacyMode
+                            ? viewModel.presentationStyle.secondaryTextColor.opacity(0.4)
+                            : .red
+                    )
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .background(
+                        viewModel.isPrivacyMode
+                            ? viewModel.presentationStyle.secondaryTextColor.opacity(0.06)
+                            : Color.red.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
             }
             .buttonStyle(.borderless)
         }
@@ -462,7 +550,7 @@ private struct ControlsBar: View {
     private func controlsContent(density: Density) -> some View {
         let spacing: CGFloat = density == .compact ? 10 : (density == .standard ? 14 : 18)
         let iconSize: CGFloat = 15
-        
+
         HStack(spacing: spacing) {
             // Playback Group
             HStack(spacing: 8) {
@@ -478,7 +566,7 @@ private struct ControlsBar: View {
             }
 
             Divider().frame(height: 16).background(Color.white.opacity(viewModel.presentationStyle.dividerOpacity))
-            
+
             // Timer Widget (Unified with Ghost Mode)
             Button(action: {
                 if viewModel.mousePenetration {
@@ -498,7 +586,7 @@ private struct ControlsBar: View {
                         Text("READY \(viewModel.ghostModeCountdown)")
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundColor(.orange)
-                            
+
                     case .ghostRun:
                         Image(systemName: "lock.fill")
                             .font(.system(size: iconSize - 2))
@@ -507,7 +595,7 @@ private struct ControlsBar: View {
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundColor(.orange)
                             .frame(width: 52, alignment: .leading)
-                            
+
                     case .speech:
                         Image(systemName: "timer")
                             .font(.system(size: iconSize - 2))
@@ -523,7 +611,7 @@ private struct ControlsBar: View {
             .help(viewModel.mousePenetration ? "幽灵模式锁定中" : "计时器")
 
             Divider().frame(height: 16).background(Color.white.opacity(viewModel.presentationStyle.dividerOpacity))
-            
+
             // ✨ 极简模式：语速调节 (稍微放宽一点宽度)
             if density == .compact {
                 HStack(spacing: 6) {
@@ -534,7 +622,7 @@ private struct ControlsBar: View {
                         .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.8))
                         .frame(width: 24, alignment: .trailing)
                 }
-                
+
                 Divider().frame(height: 16).background(Color.white.opacity(viewModel.presentationStyle.dividerOpacity))
             }
 
@@ -549,9 +637,9 @@ private struct ControlsBar: View {
                 }
             }
 
-            if density == .full { 
-                Spacer(minLength: 12) 
-            } else { 
+            if density == .full {
+                Spacer(minLength: 12)
+            } else {
                 Spacer(minLength: 4).frame(maxWidth: 20)
             }
 
@@ -563,9 +651,9 @@ private struct ControlsBar: View {
                         .font(.system(size: iconSize, weight: .medium))
                         .foregroundStyle(viewModel.showLibrary ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor)
                 }
-                
+
                 // 2. Always on Top
-                Button(action: { viewModel.alwaysOnTop.toggle() }) {
+                Button(action: { viewModel.toggleAlwaysOnTop() }) {
                     Image(systemName: viewModel.alwaysOnTop ? "pin.fill" : "pin")
                         .font(.system(size: iconSize, weight: .medium))
                         .foregroundStyle(viewModel.alwaysOnTop ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor)
@@ -575,7 +663,7 @@ private struct ControlsBar: View {
                 .help(viewModel.isPrivacyMode ? "隐私防护模式下强制置顶" : "置顶")
 
                 // 3. Privacy Mode (Stealth + Capture)
-                Button(action: { viewModel.isPrivacyMode.toggle() }) {
+                Button(action: { viewModel.togglePrivacy() }) {
                     Image(systemName: viewModel.isPrivacyMode ? "shield.fill" : "shield")
                         .font(.system(size: iconSize, weight: .medium))
                         .foregroundStyle(viewModel.isPrivacyMode ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor)
@@ -584,12 +672,12 @@ private struct ControlsBar: View {
 
                 if density == .full {
                     Group {
-                        Button(action: { viewModel.mirroredHorizontal.toggle() }) {
+                        Button(action: { viewModel.toggleMirrorH() }) {
                             Image(systemName: "arrow.left.and.right.square")
                                 .font(.system(size: iconSize))
                                 .foregroundStyle(viewModel.mirroredHorizontal ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor)
                         }
-                        Button(action: { viewModel.mirroredVertical.toggle() }) {
+                        Button(action: { viewModel.toggleMirrorV() }) {
                             Image(systemName: "arrow.up.and.down.square")
                                 .font(.system(size: iconSize))
                                 .foregroundStyle(viewModel.mirroredVertical ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor)
@@ -599,7 +687,16 @@ private struct ControlsBar: View {
                                 .font(.system(size: iconSize))
                                 .foregroundStyle(viewModel.isAIStreaming ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor)
                         }
-                        Button(action: { viewModel.isEditing = true }) { Image(systemName: "pencil").font(.system(size: iconSize)).foregroundStyle(viewModel.presentationStyle.secondaryTextColor) }
+                        Button(action: {
+                            if !viewModel.isPrivacyMode {
+                                viewModel.isEditing = true
+                            }
+                        }) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: iconSize))
+                                .foregroundStyle(viewModel.isPrivacyMode ? viewModel.presentationStyle.secondaryTextColor.opacity(0.3) : viewModel.presentationStyle.secondaryTextColor)
+                        }
+                        .disabled(viewModel.isPrivacyMode)
                         Button(action: viewModel.pasteFromClipboard) { Image(systemName: "doc.on.clipboard").font(.system(size: iconSize)).foregroundStyle(viewModel.presentationStyle.secondaryTextColor) }
                     }
                     Divider().frame(height: 16).background(Color.white.opacity(viewModel.presentationStyle.dividerOpacity))
@@ -611,7 +708,7 @@ private struct ControlsBar: View {
                         .font(.system(size: iconSize, weight: .medium))
                         .foregroundStyle(viewModel.showSettings ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor)
                 }
-                
+
                 if density == .full {
                     Button(action: viewModel.showHelp) {
                         Image(systemName: "questionmark.circle")
@@ -620,7 +717,7 @@ private struct ControlsBar: View {
                     }
                 }
 
-                Button(action: { viewModel.showControls = false }) {
+                Button(action: { if !viewModel.isPrivacyMode { viewModel.showControls = false } }) {
                     Image(systemName: "arrow.down.to.line")
                         .font(.system(size: iconSize))
                         .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.4))
@@ -652,7 +749,7 @@ private struct ControlsBar: View {
     private func formatTime(_ seconds: Int) -> String {
         let mins = seconds / 60
         let secs = seconds % 60
-        
+
         if mins >= 60 {
             let hours = mins / 60
             let remainingMins = mins % 60
@@ -682,7 +779,7 @@ private struct LibrarySidebar: View {
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(viewModel.presentationStyle.secondaryTextColor)
                 Spacer()
-                
+
                 Button(action: viewModel.refreshCurrentWorkspace) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 14, weight: .bold))
@@ -708,13 +805,13 @@ private struct LibrarySidebar: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
                     .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.4))
-                
+
                 TextField("", text: $viewModel.scriptSearchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundColor(viewModel.presentationStyle.secondaryTextColor)
                     .tint(viewModel.presentationStyle.accentColor)
-                
+
                 if !viewModel.scriptSearchQuery.isEmpty {
                     Button(action: { viewModel.scriptSearchQuery = "" }) {
                         Image(systemName: "xmark.circle.fill")
@@ -751,15 +848,15 @@ private struct LibrarySidebar: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         let query = viewModel.debouncedSearchQuery.lowercased()
-                        
+
                         ForEach(Array(viewModel.workspaces.enumerated()), id: \.element.id) { wIndex, workspace in
                             // Filter scripts within this workspace
                             let filteredScripts = workspace.scripts.filter { script in
-                                query.isEmpty || 
-                                script.title.localizedCaseInsensitiveContains(query) || 
+                                query.isEmpty ||
+                                script.title.localizedCaseInsensitiveContains(query) ||
                                 script.content.localizedCaseInsensitiveContains(query)
                             }
-                            
+
                             // Only show workspace if it matches query or has matching scripts
                             if query.isEmpty || workspace.name.localizedCaseInsensitiveContains(query) || !filteredScripts.isEmpty {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -773,35 +870,35 @@ private struct LibrarySidebar: View {
                                                     .font(.system(size: 10, weight: .bold))
                                                     .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.4))
                                                     .frame(width: 12)
-                                                
+
                                                 // ✨ 文件夹图标：路径失效时显示警告色
                                                 Image(systemName: workspace.isFolderMissing ? "folder.badge.questionmark" : "folder.fill")
                                                     .font(.system(size: 12))
                                                     .foregroundColor(
-                                                        workspace.isFolderMissing ? .orange :
+                                                        workspace.isFolderMissing ? .orange.opacity(viewModel.presentationStyle.textOpacityMultiplier) :
                                                         (wIndex == viewModel.activeWorkspaceIndex ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor.opacity(0.5))
                                                     )
-                                                
+
                                                 Text(workspace.name)
                                                     .font(.system(size: 12, weight: .bold))
                                                     .foregroundColor(wIndex == viewModel.activeWorkspaceIndex ? viewModel.presentationStyle.secondaryTextColor : viewModel.presentationStyle.secondaryTextColor.opacity(0.6))
                                                     .lineLimit(1)
-                                                
+
                                                 // ✨ 路径失效警告标识
                                                 if workspace.isFolderMissing {
                                                     Text("路径失效")
                                                         .font(.system(size: 8, weight: .medium))
-                                                        .foregroundColor(.orange.opacity(0.8))
+                                                        .foregroundColor(.orange.opacity(0.8 * viewModel.presentationStyle.textOpacityMultiplier))
                                                         .padding(.horizontal, 4)
                                                         .padding(.vertical, 1)
-                                                        .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                                                        .background(Color.orange.opacity(0.15 * viewModel.presentationStyle.textOpacityMultiplier), in: RoundedRectangle(cornerRadius: 3))
                                                 }
                                             }
                                         }
                                         .buttonStyle(.plain)
-                                        
+
                                         Spacer()
-                                        
+
                                         if wIndex != 0 || viewModel.workspaces.count > 1 {
                                             HStack(spacing: 8) {
                                                 // ✨ 刷新按钮 (仅针对有关联文件夹的工作区)
@@ -812,8 +909,8 @@ private struct LibrarySidebar: View {
                                                             .font(.system(size: 10))
                                                             .rotationEffect(.degrees(viewModel.refreshingWorkspaceId == workspace.id ? 360 : 0))
                                                             .animation(
-                                                                viewModel.refreshingWorkspaceId == workspace.id 
-                                                                    ? .linear(duration: 0.6).repeatForever(autoreverses: false) 
+                                                                viewModel.refreshingWorkspaceId == workspace.id
+                                                                    ? .linear(duration: 0.6).repeatForever(autoreverses: false)
                                                                     : .default,
                                                                 value: viewModel.refreshingWorkspaceId
                                                             )
@@ -835,7 +932,7 @@ private struct LibrarySidebar: View {
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 4)
-                                    
+
                                     // Scripts
                                     if workspace.isExpanded || !query.isEmpty {
                                         if filteredScripts.isEmpty && query.isEmpty {
@@ -849,7 +946,7 @@ private struct LibrarySidebar: View {
                                                 ForEach(filteredScripts) { script in
                                                     // Find original index for navigation
                                                     let originalSIndex = workspace.scripts.firstIndex(where: { $0.id == script.id }) ?? 0
-                                                    
+
                                                     ScriptRow(
                                                         script: script,
                                                         isSelected: wIndex == viewModel.activeWorkspaceIndex && originalSIndex == viewModel.activeScriptIndex,
@@ -883,13 +980,13 @@ private struct LibrarySidebar: View {
 
             // Footer / Navigation
             if viewModel.activeWorkspaceIndex >= 0 && viewModel.activeWorkspaceIndex < viewModel.workspaces.count && !viewModel.workspaces[viewModel.activeWorkspaceIndex].scripts.isEmpty {
-                Divider().background(Color.white.opacity(viewModel.presentationStyle.dividerOpacity))
+                Divider().background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
                 HStack {
                     Button(action: viewModel.prevScript) {
                         Image(systemName: "arrow.up")
                     }
                     .buttonStyle(.borderless)
-                    
+
                     Spacer()
                     let currentCount = viewModel.workspaces[viewModel.activeWorkspaceIndex].scripts.count
                     Text("\(viewModel.activeScriptIndex + 1) / \(currentCount)")
@@ -916,8 +1013,9 @@ private struct LibrarySidebar: View {
         .overlay(alignment: .leading) {
             Divider()
                 .frame(width: 1)
-                .background(Color.white.opacity(viewModel.presentationStyle.dividerOpacity))
+                .background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
         }
+        .opacity(viewModel.presentationStyle.panelOpacityMultiplier)
         .blur(radius: viewModel.presentationStyle.blurRadius)
     }
 }
@@ -969,10 +1067,10 @@ private struct ScriptRow: View {
             .background {
                 if isSelected {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(style.subtleFillOpacity))
+                        .fill(style.secondaryTextColor.opacity(style.subtleFillOpacity))
                 } else {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(style.subtleFillOpacity * 0.35))
+                        .fill(style.secondaryTextColor.opacity(style.subtleFillOpacity * 0.35))
                 }
             }
         }
@@ -982,9 +1080,9 @@ private struct ScriptRow: View {
             Button(action: onRename) {
                 Label("重命名", systemImage: "pencil")
             }
-            
+
             Divider()
-            
+
             // ✨ 移动到其他工作区
             if workspaces.count > 1 {
                 Menu("移动到...") {
@@ -997,14 +1095,14 @@ private struct ScriptRow: View {
                     }
                 }
             }
-            
+
             // ✨ 导出为文件
             Button(action: onExport) {
                 Label("导出为文件...", systemImage: "square.and.arrow.up")
             }
-            
+
             Divider()
-            
+
             Button(role: .destructive, action: onDelete) {
                 Label("移除脚本", systemImage: "trash")
             }
@@ -1024,7 +1122,7 @@ private struct EditorOverlay: View {
             viewModel.presentationStyle.backgroundColor
                 .opacity(max(0.7, viewModel.bgOpacity * viewModel.presentationStyle.panelOpacityMultiplier))
                 .ignoresSafeArea()
-            
+
             VStack(spacing: 16) {
                 HStack {
                     Text("编辑脚本")
@@ -1045,7 +1143,7 @@ private struct EditorOverlay: View {
                     .tint(viewModel.presentationStyle.accentColor)
                 }
                 .buttonStyle(.plain)
-                
+
                 TextEditor(text: $viewModel.text)
                     .focused($editorFocused)
                     .font(.system(size: 15))
@@ -1073,6 +1171,7 @@ private struct EditorOverlay: View {
 
 // MARK: - Helpers
 
+@MainActor
 private func clickableContextTag(text: String, icon: String, viewModel: SparklePromptViewModel) -> some View {
     HStack(spacing: 4) {
         Image(systemName: icon)
@@ -1080,11 +1179,27 @@ private func clickableContextTag(text: String, icon: String, viewModel: SparkleP
         Text(text)
             .font(.system(size: 10, weight: .medium))
     }
-    .foregroundColor(.white.opacity(0.7))
+    .foregroundColor(
+        viewModel.isPrivacyMode
+            ? viewModel.presentationStyle.secondaryTextColor.opacity(0.4)
+            : viewModel.presentationStyle.accentColor
+    )
     .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(Color.white.opacity(0.08), in: Capsule())
-    .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+    .padding(.vertical, 3)
+    .background(
+        viewModel.isPrivacyMode
+            ? viewModel.presentationStyle.secondaryTextColor.opacity(0.06)
+            : viewModel.presentationStyle.accentColor.opacity(0.12),
+        in: Capsule()
+    )
+    .overlay(
+        Capsule().stroke(
+            viewModel.isPrivacyMode
+                ? Color.clear
+                : viewModel.presentationStyle.accentColor.opacity(0.25),
+            lineWidth: viewModel.isPrivacyMode ? 0 : 0.5
+        )
+    )
     .contentShape(Capsule())
     .onTapGesture {
         Task { @MainActor in
@@ -1094,6 +1209,7 @@ private func clickableContextTag(text: String, icon: String, viewModel: SparkleP
     .help("点击清除背景资料")
 }
 
+@MainActor
 private func clickableNoContextTag(viewModel: SparklePromptViewModel) -> some View {
     HStack(spacing: 4) {
         Image(systemName: "xmark.circle.fill")
@@ -1101,11 +1217,27 @@ private func clickableNoContextTag(viewModel: SparklePromptViewModel) -> some Vi
         Text("无背景")
             .font(.system(size: 10, weight: .medium))
     }
-    .foregroundColor(.white.opacity(0.35))
+    .foregroundColor(
+        viewModel.isPrivacyMode
+            ? viewModel.presentationStyle.secondaryTextColor.opacity(0.25)
+            : viewModel.presentationStyle.secondaryTextColor.opacity(0.4)
+    )
     .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(Color.white.opacity(0.04), in: Capsule())
-    .overlay(Capsule().stroke(Color.white.opacity(0.08), lineWidth: 1))
+    .padding(.vertical, 3)
+    .background(
+        viewModel.isPrivacyMode
+            ? viewModel.presentationStyle.secondaryTextColor.opacity(0.03)
+            : Color.white.opacity(0.06),
+        in: Capsule()
+    )
+    .overlay(
+        Capsule().stroke(
+            viewModel.isPrivacyMode
+                ? Color.clear
+                : Color.white.opacity(0.12),
+            lineWidth: viewModel.isPrivacyMode ? 0 : 0.5
+        )
+    )
     .contentShape(Capsule())
     .onTapGesture {
         Task { @MainActor in
@@ -1121,16 +1253,51 @@ private func showRenameAlert(initialTitle: String, completion: @escaping (String
     alert.informativeText = "请输入新的剧本名称："
     alert.addButton(withTitle: "确定")
     alert.addButton(withTitle: "取消")
-    
+
     let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
     textField.stringValue = initialTitle
     alert.accessoryView = textField
-    
+
     let response = alert.runModal()
     if response == .alertFirstButtonReturn {
         let newName = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if !newName.isEmpty {
             completion(newName)
         }
+    }
+}
+
+struct TextViewIntrospector: NSViewRepresentable {
+    var configure: (NSTextView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        return NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            var parent: NSView? = nsView.superview
+            while parent != nil {
+                if let scrollView = findScrollView(in: parent!) {
+                    if let textView = scrollView.documentView as? NSTextView {
+                        configure(textView)
+                    }
+                    break
+                }
+                parent = parent?.superview
+            }
+        }
+    }
+
+    private func findScrollView(in view: NSView) -> NSScrollView? {
+        if let scrollView = view as? NSScrollView {
+            return scrollView
+        }
+        for subview in view.subviews {
+            if let found = findScrollView(in: subview) {
+                return found
+            }
+        }
+        return nil
     }
 }

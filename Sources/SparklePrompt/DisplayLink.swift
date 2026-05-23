@@ -13,33 +13,33 @@ final class DisplayLink {
 
     init(onFrame: @escaping (Double) -> Void) {
         self.onFrame = onFrame
-        
+
         // Create CVDisplayLink
         var dl: CVDisplayLink?
         CVDisplayLinkCreateWithActiveCGDisplays(&dl)
         self.displayLink = dl
-        
+
         guard let displayLink = self.displayLink else { return }
-        
+
         // Retain self so the callback pointer remains valid for the lifetime of CVDisplayLink.
         let retained = Unmanaged.passRetained(self)
         self.retainedSelf = retained
-        
+
         // Set the output callback
         let callback: CVDisplayLinkOutputCallback = { _, inNow, _, _, _, userData in
             let link = Unmanaged<DisplayLink>.fromOpaque(userData!).takeUnretainedValue()
-            
+
             // 获取当前硬件时间点 (秒)
             let seconds = Double(inNow.pointee.videoTime) / Double(inNow.pointee.videoTimeScale)
-            
+
             // Use DispatchQueue.main.async for faster scheduling than Task
             DispatchQueue.main.async {
                 link.onFrame(seconds)
             }
-            
+
             return kCVReturnSuccess
         }
-        
+
         CVDisplayLinkSetOutputCallback(displayLink, callback, retained.toOpaque())
     }
 

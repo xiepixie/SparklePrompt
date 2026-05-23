@@ -6,11 +6,11 @@ actor AIService {
 
     /// Cancel any in-flight streaming request.
     func cancel() { currentTask?.cancel(); currentTask = nil }
-    
+
     private nonisolated func buildEndpoint(baseURL: String, suffix: String, provider: AIProvider? = nil) -> String {
         var base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.hasSuffix("/") { base.removeLast() }
-        
+
         if base.hasSuffix("/v1") {
             return base + suffix
         } else if suffix.hasPrefix("/api/") {
@@ -19,12 +19,12 @@ actor AIService {
             return base + "/v1" + suffix
         }
     }
-    
+
     /// Test connection and fetch available models based on the provider.
     nonisolated func fetchAvailableModels(baseURL: String, apiKey: String, provider: AIProvider) async throws -> [String] {
         var endpoint: String
         var request: URLRequest
-        
+
         switch provider {
         case .deepseek, .openAICompatible, .mstyOllama, .mstyMLX:
             endpoint = buildEndpoint(baseURL: baseURL, suffix: "/models")
@@ -42,32 +42,32 @@ actor AIService {
             request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         }
-        
+
         request.httpMethod = "GET"
         request.timeoutInterval = 15
-        
+
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            
+
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                 let errorMsg = parseErrorMessage(statusCode: http.statusCode)
                 throw NSError(domain: "APIError", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMsg])
             }
-            
+
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            
+
             // 1. Try OpenAI/Anthropic "data" format first (e.g. {"data": [{"id": "model-name"}, ...]})
             if let dataArr = json?["data"] as? [[String: Any]] {
                 let ids = dataArr.compactMap { $0["id"] as? String }
                 if !ids.isEmpty { return ids }
             }
-            
+
             // 2. Try Ollama native "models" format (e.g. {"models": [{"name": "model:tag"}, ...]})
             if let modelsArr = json?["models"] as? [[String: Any]] {
                 let names = modelsArr.compactMap { ($0["name"] as? String) ?? ($0["id"] as? String) }
                 if !names.isEmpty { return names }
             }
-            
+
             return []
         } catch let nsError as NSError {
             if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCannotConnectToHost {
@@ -104,7 +104,7 @@ actor AIService {
         onError: @MainActor @Sendable @escaping (String) -> Void
     ) {
         cancel()
-        
+
         // Try primary provider first, then failover providers
         attemptStream(
             apiKey: apiKey,
@@ -122,7 +122,7 @@ actor AIService {
             onError: onError
         )
     }
-    
+
     private func attemptStream(
         apiKey: String,
         baseURL: String,
@@ -140,10 +140,6 @@ actor AIService {
         onDone: @MainActor @Sendable @escaping () -> Void,
         onError: @MainActor @Sendable @escaping (String) -> Void
     ) {
-        // Detect if using GPT 5.5+ (uses Responses API)
-        let isGPT55 = model.lowercased().contains("gpt-5.5") || model.lowercased().contains("gpt-5") || model.lowercased().contains("gpt-5.1")
-        print("🔍 Model: \(model), isGPT55: \(isGPT55), provider: \(provider.rawValue)")
-        
         let urlString: String
         switch provider {
         case .ollama:
@@ -166,9 +162,6 @@ actor AIService {
             // The Responses API might not be available on all endpoints
             urlString = buildEndpoint(baseURL: baseURL, suffix: "/chat/completions")
         }
-        
-        print("🌐 Request URL: \(urlString)")
-        
         guard let ep = URL(string: urlString) else {
             Task { @MainActor in onError("无效的 API 地址") }
             return
@@ -184,7 +177,7 @@ actor AIService {
             request.httpMethod = "POST"
             request.timeoutInterval = 60
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            
+
             if provider == .anthropic {
                 request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
                 request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -194,10 +187,10 @@ actor AIService {
 
             // 检测是否使用官方Anthropic API
             let isOfficialAnthropic = provider == .anthropic && baseURL.contains("api.anthropic.com")
-            
+
             // 保持 System Prompt 在第一位，确保前缀缓存（Context Caching）的高命中率。
             var messages: [[String: Any]] = []
-            
+
             // 代理服务使用原生Anthropic格式（system在顶层）
             if provider == .anthropic && !isOfficialAnthropic {
                 // 不在messages中添加system role
@@ -205,25 +198,25 @@ actor AIService {
                 // OpenAI兼容格式使用标准messages数组
                 messages.append(["role": "system", "content": systemPrompt])
             }
-            
+
             // 如果有上下文（当前剧本），以纯中立的背景资料形式提供。
             if let context = context, !context.isEmpty {
                 messages.append(["role": "user", "content": "背景资料：\n\(context)"])
             }
-            
+
             // 尾部指令增强 (Tail Instruction Reinforcement)
             // 利用大模型的末端注意力机制，防止模型在长上下文后产生"指令漂移"。
             // 重点提醒：结合背景但不重复背景，直接回答。
             let reinforcedPrompt = """
             \(prompt)
-            
+
             (请直接针对问题进行回复。注意：请结合你的角色设定和背景资料进行专业回答，但无需再次介绍背景或复述身份，保持自然口语化。)
             """
             messages.append(["role": "user", "content": reinforcedPrompt])
 
             var body: [String: Any]
             let lowerModel = model.lowercased()
-            
+
             // Use standard Chat Completions API format for all providers
             body = [
                 "model": model,
@@ -231,7 +224,7 @@ actor AIService {
                 "messages": messages,
                 "max_tokens": 4096
             ]
-            
+
             // GPT 5.5 特定配置（根据官方配置）
             if provider == .openAICompatible && lowerModel.contains("gpt-5") {
                 body["store"] = false
@@ -240,7 +233,7 @@ actor AIService {
                     body["reasoning_effort"] = "xhigh"
                 }
             }
-            
+
             // 为推理模型自动管理思考模式（仅针对DeepSeek）
             if provider == .deepseek {
                 if enableThinking {
@@ -253,7 +246,7 @@ actor AIService {
                 }
                 body["stream_options"] = ["include_usage": true]
             }
-            
+
             // Anthropic特殊处理（包括官方和代理）
             if provider == .anthropic {
                 body["system"] = systemPrompt // Anthropic system prompt is top-level
@@ -262,17 +255,12 @@ actor AIService {
                      body["thinking"] = ["type": "enabled", "budget_tokens": 1024]
                 }
             }
-            
-            print("📦 Request body: \(body)")
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
             do {
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
 
                 if let http = response as? HTTPURLResponse {
-                    print("📡 HTTP Status: \(http.statusCode)")
-                    print("📡 Response Headers: \(http.allHeaderFields)")
-                    
                     if http.statusCode != 200 {
                         await onError("API 返回错误: HTTP \(http.statusCode)")
                         return
@@ -280,55 +268,39 @@ actor AIService {
                 }
 
                 var isThinking = false
-                var lineCount = 0
-                var chunkCount = 0
-                
+
                 for try await line in bytes.lines {
                     if Task.isCancelled { break }
-                    
-                    lineCount += 1
-                    if lineCount <= 10 { // 打印前10行
-                        print("📥 Line \(lineCount): \(line)")
-                    }
 
                     guard line.hasPrefix("data: ") else { continue }
                     let payload = String(line.dropFirst(6))
 
-                    if payload == "[DONE]" { 
-                        print("✅ Stream ended with [DONE], total chunks: \(chunkCount)")
-                        break 
+                    if payload == "[DONE]" {
+                        break
                     }
 
                     guard let data = payload.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                    else { 
-                        print("❌ Failed to parse JSON: \(payload)")
-                        continue 
-                    }
-                    
-                    chunkCount += 1
-                    if chunkCount <= 10 {
-                        print("📋 Parsed JSON #\(chunkCount): \(json)")
+                    else {
+                        continue
                     }
 
                     // 统一使用标准 Chat Completions 格式解析（包括GPT 5.5）
                     if let choices = json["choices"] as? [[String: Any]],
                        let first = choices.first,
                        let delta = first["delta"] as? [String: Any] {
-                        
+
                         // 优先处理推理内容（深度思考）
                         if let reasoning = delta["reasoning_content"] as? String {
-                            print("🧠 Reasoning content: \(reasoning)")
                             if !isThinking {
                                 await onChunk("<think>\n")
                                 isThinking = true
                             }
                             await onChunk(reasoning)
                         }
-                        
+
                         // 处理正式回复内容
                         if let content = delta["content"] as? String {
-                            print("💬 Content: \(content)")
                             if isThinking {
                                 await onChunk("\n</think>\n\n")
                                 isThinking = false
@@ -336,12 +308,12 @@ actor AIService {
                             await onChunk(content)
                         }
                     }
-                    
+
                     // Anthropic 格式 (支持 content_block_delta 和 thinking)
                     if provider == .anthropic, let type = json["type"] as? String {
                         if type == "content_block_delta",
                            let delta = json["delta"] as? [String: Any] {
-                            
+
                             // Anthropic Thinking Block
                             if let thinking = delta["thinking"] as? String {
                                 if !isThinking {
@@ -350,7 +322,7 @@ actor AIService {
                                 }
                                 await onChunk(thinking)
                             }
-                            
+
                             // Anthropic Text Block
                             if let content = delta["text"] as? String {
                                 if isThinking {
@@ -361,15 +333,8 @@ actor AIService {
                             }
                         }
                     }
-                    
-                    // 处理最终的 Usage 统计 (Context Caching 命中情况)
-                    if let usage = json["usage"] as? [String: Any] {
-                        let hit = usage["prompt__hit_tokens"] as? Int ?? 0
-                        let miss = usage["prompt_cache_miss_tokens"] as? Int ?? 0
-                        if hit > 0 {
-                            print("DeepSeek Cache Hit: \(hit) tokens, Miss: \(miss) tokens")
-                        }
-                    }
+                    // Provider usage metadata is intentionally ignored here.
+                    // Never log prompt, context, reasoning, or streamed content.
                 }
 
                 if !Task.isCancelled {
@@ -380,13 +345,11 @@ actor AIService {
             } catch {
                 if !Task.isCancelled {
                     let nsError = error as NSError
-                    print("❌ Network error: \(nsError.localizedDescription), code: \(nsError.code)")
-                    
+
                     // Retry logic for network errors
                     if retryCount < maxRetries && (nsError.domain == NSURLErrorDomain || nsError.code == -1001 || nsError.code == -1005) {
-                        print("🔄 Retrying... (attempt \(retryCount + 1)/\(maxRetries))")
                         try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 * (retryCount + 1))) // Exponential backoff
-                        
+
                         attemptStream(
                             apiKey: apiKey,
                             baseURL: baseURL,
@@ -407,7 +370,6 @@ actor AIService {
                     } else if failoverIndex < failoverProviders.count {
                         // Try failover if available
                         let nextProvider = failoverProviders[failoverIndex]
-                        print("🔄 Primary provider failed, trying failover: \(nextProvider.provider.rawValue)")
                         attemptStream(
                             apiKey: nextProvider.apiKey,
                             baseURL: nextProvider.baseURL,

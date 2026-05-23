@@ -91,7 +91,7 @@ These are the default shortcuts. They can be changed in
 | `E` | Edit the current script |
 | `V` | Paste clipboard contents into a new inbox script |
 | `T` | Toggle always-on-top |
-| `S` | Toggle privacy mode |
+| `S` | Enter privacy mode; press twice in quick succession to exit |
 | `K` | Start / pause speech timer |
 | `Shift + K` | Reset speech timer |
 | `L` | Show / hide the script library |

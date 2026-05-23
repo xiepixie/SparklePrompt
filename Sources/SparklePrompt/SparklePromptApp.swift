@@ -14,7 +14,7 @@ struct SparklePromptApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var window: NSWindow!
     let viewModel = SparklePromptViewModel()
-    
+
     /// The canonical width of the main content area (without sidebar).
     /// This is the single source of truth for all window size calculations.
     /// It is ONLY updated:
@@ -27,12 +27,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 移除冗余的 .regular 设置，由 setStealthMode 统一在末尾决定初始状态
 
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        
+
         // 优化后的尺寸：620x700
         // 这个尺寸在 16 寸 MBP 上既能显示足够的文字，又不会导致严重的眼球扫视。
         let defaultWidth: CGFloat = 620
         let defaultHeight: CGFloat = 700
-        
+
         let frame = NSRect(
             x: screen.midX - defaultWidth / 2,
             y: screen.midY - defaultHeight / 2,
@@ -48,14 +48,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         (window as? NSPanel)?.becomesKeyOnlyIfNeeded = false
         (window as? NSPanel)?.hidesOnDeactivate = false
-        
+
         // 强制禁用窗口状态恢复，确保设置的初始尺寸生效
         window.isRestorable = false
         window.setFrame(frame, display: true)
-        
+
         window.minSize = NSSize(width: 450, height: 400)
         window.maxSize = NSSize(width: 1000, height: 1200)
-        
+
         window.title = "SparklePrompt"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -81,10 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         window.delegate = self
         baseWindowWidth = defaultWidth
-        
+
         // ✨ 应用初始隐私防护状态
         setStealthMode(viewModel.isPrivacyMode)
-        
+
         // 隐私模式下不激活应用，避免暴露
         if !viewModel.isPrivacyMode {
             NSApp.activate(ignoringOtherApps: true)
@@ -104,21 +104,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func setHideFromCapture(_ hide: Bool) {
         window?.sharingType = hide ? .none : .readOnly
     }
-    
+
     func setMousePenetration(_ enabled: Bool) {
         window?.ignoresMouseEvents = enabled
     }
-    
+
     func setStealthMode(_ isStealth: Bool) {
         guard let window = window as? SparklePromptWindow else { return }
         window.isStealthMode = isStealth
-        
+
         // 1. 提升窗口层级
         window.level = isStealth ? NSWindow.Level.mainMenu : (viewModel.alwaysOnTop ? .floating : .normal)
-        
+
         // 2. 修改应用激活策略
         NSApp.setActivationPolicy(isStealth ? .accessory : .regular)
-        
+
         // 退出隐私模式时不强制激活应用和窗口，避免暴露
 
         // if !isStealth {
@@ -126,9 +126,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         //     window.makeKeyAndOrderFront(self)
         // }
     }
-    
+
     // MARK: - NSWindowDelegate
-    
+
     /// Called ONLY when the user finishes manually dragging the window edge.
     /// Does NOT fire during programmatic animations (NSAnimationContext).
     func windowDidEndLiveResize(_ notification: Notification) {
@@ -141,11 +141,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // MARK: - Sidebar Toggle
-    
+
     func toggleSidebar(show: Bool) {
         guard let window = window else { return }
         let sidebarWidth = SparklePromptViewModel.sidebarWidth
-        
+
         // ABSOLUTE target computation from baseWindowWidth.
         // No matter how many times this is called mid-animation,
         // the target is always deterministic:
@@ -153,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         //   close → baseWindowWidth
         var frame = window.frame
         frame.size.width = show ? baseWindowWidth + sidebarWidth : baseWindowWidth
-        
+
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.45
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -164,10 +164,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 final class SparklePromptWindow: NSPanel {
     var isStealthMode: Bool = false
-    
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-    
+
     override func keyDown(with event: NSEvent) {
         // 阻止 ESC 键关闭窗口的默认行为
         if event.keyCode == 53 {

@@ -222,6 +222,8 @@ scrolling follows the rendered output instead of the raw text event.
 `Sources/SparklePrompt/KeyEventBridge.swift` installs local event monitors:
 
 - Key monitor dispatches configurable shortcuts.
+- Shortcut dispatch ignores key-repeat events and debounces identical key
+  signatures to avoid duplicate toggles from rapid monitor churn.
 - Scroll monitor adjusts `scrollOffset`.
 - Esc closes active overlays or is swallowed to avoid closing the panel.
 - Text input controls are allowed to receive normal unmodified key presses.
@@ -274,6 +276,8 @@ When privacy mode is on:
 - window level is raised to `.mainMenu`
 - always-on-top is forced
 - presentation colors become low-contrast and optional blur is applied
+- keyboard/UI exits require a second privacy toggle within the confirmation
+  window, reducing accidental privacy-off events
 
 Ghost Mode adds:
 

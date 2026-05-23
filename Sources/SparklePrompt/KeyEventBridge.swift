@@ -18,17 +18,31 @@ struct KeyEventBridge: NSViewRepresentable {
 final class KeyHandlingView: NSView {
     weak var viewModel: SparklePromptViewModel? {
         didSet {
+            guard oldValue !== viewModel else { return }
             setupMonitors(viewModel != nil)
         }
     }
     private var monitor: Any?
     private var scrollMonitor: Any?
 
+    private struct KeySignature: Equatable {
+        let keyCode: UInt16
+        let modifiers: NSEvent.ModifierFlags
+    }
+
+    private struct DispatchGate {
+        let signature: KeySignature
+        let timestamp: TimeInterval
+    }
+
+    private static var lastDispatchGate: DispatchGate?
+    private static let shortcutDebounceInterval: TimeInterval = 0.1
+
     func setupMonitors(_ active: Bool) {
         // 强制清理旧监听器，防止捕获失效
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
         if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
-        
+
         if active {
             installMonitor()
             installScrollMonitor()
@@ -62,14 +76,15 @@ final class KeyHandlingView: NSView {
 
             // 1. 拦截 ESC (keyCode 53)
             if event.keyCode == 53 {
+                guard Self.shouldDispatch(event, isContinuous: false) else { return nil }
                 if vm.showSettings { DispatchQueue.main.async { vm.showSettings = false }; return nil }
                 if vm.isEditing { DispatchQueue.main.async { vm.isEditing = false }; return nil }
-                if vm.showAIPromptBar { 
-                    DispatchQueue.main.async { 
+                if vm.showAIPromptBar {
+                    DispatchQueue.main.async {
                         vm.showAIPromptBar = false
-                        vm.aiPrompt = "" 
+                        vm.aiPrompt = ""
                     }
-                    return nil 
+                    return nil
                 }
                 // 没有匹配任何UI关闭条件，也阻止ESC键的默认行为（防止关闭窗口）
                 return nil
@@ -105,12 +120,31 @@ final class KeyHandlingView: NSView {
         }
     }
 
+    private static func isContinuousAction(_ action: ShortcutAction) -> Bool {
+        switch action {
+        case .increaseFontSize, .decreaseFontSize,
+             .increaseBgOpacity, .decreaseBgOpacity,
+             .increaseTextOpacity, .decreaseTextOpacity:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func handle(event: NSEvent, viewModel vm: SparklePromptViewModel) -> Bool {
         // ✨ 关键优化：只关注核心修饰符，忽略 CapsLock 等系统标志
         let coreModifiers = event.modifierFlags.intersection([.command, .option, .shift, .control])
-        
+
         for (action, shortcut) in vm.shortcuts {
             if event.keyCode == shortcut.keyCode && shortcut.normalizedModifiers == coreModifiers {
+                let isContinuous = isContinuousAction(action)
+                guard shouldDispatch(event, isContinuous: isContinuous) else { return true }
+
+                // 🔒 隐私模式下禁用编辑模式快捷键
+                if action == .toggleEdit && vm.isPrivacyMode {
+                    return true
+                }
+
                 DispatchQueue.main.async {
                     print("⌨️ Shortcut triggered: \(action)")
                     switch action {
@@ -120,7 +154,7 @@ final class KeyHandlingView: NSView {
                     case .prevScript: vm.prevScript()
                     case .nextScript: vm.nextScript()
                     case .aiPrompt: vm.showAIPromptBar.toggle()
-                    case .toggleControls: vm.showControls.toggle()
+                    case .toggleControls: vm.toggleControls()
                     case .toggleAlwaysOnTop: vm.toggleAlwaysOnTop()
                     case .togglePrivacy: vm.togglePrivacy()
                     case .paste: vm.pasteFromClipboard()
@@ -145,9 +179,11 @@ final class KeyHandlingView: NSView {
 
         switch event.keyCode {
         case 126: // Up
+            guard shouldDispatch(event, isContinuous: true) else { return true }
             DispatchQueue.main.async { vm.adjustSpeed(5) }
             return true
         case 125: // Down
+            guard shouldDispatch(event, isContinuous: true) else { return true }
             DispatchQueue.main.async { vm.adjustSpeed(-5) }
             return true
         default:
@@ -155,12 +191,40 @@ final class KeyHandlingView: NSView {
         }
     }
 
+    private static func shouldDispatch(_ event: NSEvent, isContinuous: Bool) -> Bool {
+        let signature = KeySignature(
+            keyCode: event.keyCode,
+            modifiers: event.modifierFlags.intersection([.command, .option, .shift, .control])
+        )
+
+        if event.isARepeat {
+            if isContinuous {
+                return true
+            } else {
+                lastDispatchGate = DispatchGate(signature: signature, timestamp: event.timestamp)
+                return false
+            }
+        }
+
+        if !isContinuous {
+            if let last = lastDispatchGate,
+               last.signature == signature,
+               event.timestamp - last.timestamp < shortcutDebounceInterval {
+                lastDispatchGate = DispatchGate(signature: signature, timestamp: event.timestamp)
+                return false
+            }
+        }
+
+        lastDispatchGate = DispatchGate(signature: signature, timestamp: event.timestamp)
+        return true
+    }
+
     private func installScrollMonitor() {
         guard scrollMonitor == nil else { return }
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self = self, let vm = self.viewModel else { return event }
             if vm.isEditing || vm.showSettings { return event }
-            
+
             if vm.showLibrary {
                 if event.locationInWindow.x < SparklePromptViewModel.sidebarWidth {
                     return event

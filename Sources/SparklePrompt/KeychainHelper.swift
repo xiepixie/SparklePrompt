@@ -5,7 +5,7 @@ import Security
 final class KeychainHelper {
     static let shared = KeychainHelper()
     private init() {}
-    
+
     private let queue = DispatchQueue(label: "com.sparkle.keychain", qos: .userInitiated)
 
     enum KeychainError: Error {
@@ -22,7 +22,7 @@ final class KeychainHelper {
                     continuation.resume(throwing: KeychainError.stringToDataConversionError)
                     return
                 }
-                
+
                 // Use Update-first strategy to avoid the non-atomic Delete+Add pattern.
                 // This prevents data loss if the app crashes between delete and add.
                 let searchQuery: [String: Any] = [
@@ -30,14 +30,14 @@ final class KeychainHelper {
                     kSecAttrService as String: "com.sparkle.prompt.api-keys",
                     kSecAttrAccount as String: key,
                 ]
-                
+
                 let updateAttributes: [String: Any] = [
                     kSecValueData as String: data,
                     kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
                 ]
-                
+
                 let updateStatus = SecItemUpdate(searchQuery as CFDictionary, updateAttributes as CFDictionary)
-                
+
                 if updateStatus == errSecSuccess {
                     continuation.resume()
                 } else if updateStatus == errSecItemNotFound {
@@ -45,7 +45,7 @@ final class KeychainHelper {
                     var addQuery = searchQuery
                     addQuery[kSecValueData as String] = data
                     addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-                    
+
                     let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
                     if addStatus == errSecSuccess {
                         continuation.resume()
@@ -69,15 +69,15 @@ final class KeychainHelper {
                     kSecReturnData as String: true,
                     kSecMatchLimit as String: kSecMatchLimitOne
                 ]
-                
+
                 var result: AnyObject?
                 let status = SecItemCopyMatching(query as CFDictionary, &result)
-                
+
                 if status == errSecItemNotFound {
                     continuation.resume(throwing: KeychainError.notFound)
                     return
                 }
-                
+
                 if status == errSecSuccess, let data = result as? Data, let string = String(data: data, encoding: .utf8) {
                     continuation.resume(returning: string)
                 } else if status != errSecSuccess {
