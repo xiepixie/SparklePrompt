@@ -203,6 +203,26 @@ final class SparklePromptViewModel: ObservableObject {
     private static func mayContainMarkdown(_ line: String) -> Bool {
         line.rangeOfCharacter(from: markdownProbeCharacters) != nil
     }
+
+    private static func parseLineMarkdown(_ line: String) -> AttributedString {
+        let leadingWhitespace = line.prefix { $0 == " " || $0 == "\t" }
+        let trimmedLine = String(line.dropFirst(leadingWhitespace.count))
+        
+        var parsed: AttributedString
+        if mayContainMarkdown(trimmedLine) {
+            parsed = (try? AttributedString(markdown: trimmedLine)) ?? AttributedString(trimmedLine)
+        } else {
+            parsed = AttributedString(trimmedLine)
+        }
+        
+        if !leadingWhitespace.isEmpty {
+            var indented = AttributedString(String(leadingWhitespace))
+            indented.append(parsed)
+            return indented
+        } else {
+            return parsed
+        }
+    }
     @Published var isPlaying: Bool = false
     @Published var speed: Double = 45 { didSet { if !isInternalLoading { saveSubject.send() } } }
     @Published var fontSize: Double = 20 {
@@ -501,10 +521,7 @@ final class SparklePromptViewModel: ObservableObject {
     }
     @Published var debouncedSearchQuery: String = ""
     private let searchSubject = PassthroughSubject<String, Never>()
-    @Published var attributedText: AttributedString = AttributedString("") {
-        didSet { renderedTextVersion &+= 1 }
-    }
-    @Published private(set) var renderedTextVersion: Int = 0
+    @Published var attributedText: AttributedString = AttributedString("")
 
     // MARK: - AI Configuration (persisted via settings window)
 
@@ -755,10 +772,7 @@ final class SparklePromptViewModel: ObservableObject {
 
             // 🚀 行级缓存：只缓存原始 Markdown 解析后的 AttributedString，与具体的视觉样式（字体大小、颜色等）解耦
             if lineCache[line] == nil {
-                let parsed = Self.mayContainMarkdown(line)
-                    ? ((try? AttributedString(markdown: line)) ?? AttributedString(line))
-                    : AttributedString(line)
-                lineCache[line] = parsed
+                lineCache[line] = Self.parseLineMarkdown(line)
             }
 
             var lineAttr = lineCache[line]!
@@ -914,10 +928,7 @@ final class SparklePromptViewModel: ObservableObject {
                             continue
                         }
                         if !cachedKeys.contains(line) {
-                            let parsed = Self.mayContainMarkdown(line)
-                                ? ((try? AttributedString(markdown: line)) ?? AttributedString(line))
-                                : AttributedString(line)
-                            parsedChunk[line] = parsed
+                            parsedChunk[line] = Self.parseLineMarkdown(line)
                         }
                     }
                     
