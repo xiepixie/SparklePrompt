@@ -396,13 +396,7 @@ private struct AIPromptBar: View {
             .frame(maxWidth: 600)
             .padding(.horizontal, 20)
             .padding(.top, 16)
-            .onChange(of: viewModel.showAIPromptBar) { _, newValue in
-                if newValue {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        isFocused = true
-                    }
-                }
-            }
+
 
             // Error message
             if !viewModel.aiErrorMessage.isEmpty {
@@ -421,7 +415,12 @@ private struct AIPromptBar: View {
                 .padding(.top, 8)
             }
         }
-        .onAppear { isFocused = true }
+        .onAppear {
+            viewModel.windowController?.window?.makeKey()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                isFocused = true
+            }
+        }
     }
 
     private func labelTag(text: String, icon: String) -> some View {
