@@ -542,11 +542,6 @@ final class SparklePromptViewModel: ObservableObject {
             self.aiModel = providerSelectedModels[aiProvider] ?? ""
             self.apiTestStatus = providerStatuses[aiProvider]?.displayText
 
-            // On-demand load key if NOT already in memory cache
-            if (self.aiAPIKey.isEmpty || providerKeys[aiProvider] == nil) && aiProvider != .mstyOllama && aiProvider != .mstyMLX {
-                Task { await loadActiveProviderKey() }
-            }
-
             if !isInternalLoading {
                 saveSubject.send()
                 // 自动触发测试与模型刷新
@@ -1072,59 +1067,73 @@ final class SparklePromptViewModel: ObservableObject {
             }
         }
 
-        // Migrate Keychain API key if exists
+        // 1. Load API Keys from unified Keychain item, with fallback migration
+        var loadedFromUnified = false
         do {
-            if let oldKey = try? await KeychainHelper.shared.read(for: "APIKey_OpenAI 兼容") {
-                try? await KeychainHelper.shared.save(oldKey, for: "APIKey_OpenAI 兼容 1")
-                KeychainHelper.shared.delete(for: "APIKey_OpenAI 兼容")
-            }
-        }
-
-        // Load main provider
-        if let providerRaw = UserDefaults.standard.string(forKey: "Pref_aiProvider"),
-           let provider = AIProvider(rawValue: providerRaw) {
-            self.aiProvider = provider
-        }
-
-        // Load per-provider dictionaries
-        if var keys = UserDefaults.standard.dictionary(forKey: "Pref_providerKeys") as? [String: String] {
-            var keysModified = false
-            for (k, v) in keys {
-                if let p = AIProvider(rawValue: k) {
-                    do {
-                        try await KeychainHelper.shared.save(v, for: "APIKey_\(k)")
-                        providerKeys[p] = v
-                        keys.removeValue(forKey: k)
-                        keysModified = true
-                        print("✅ Keychain migration successful for \(k)")
-                    } catch {
-                        print("⚠️ Keychain migration failed for \(k): \(error)")
-                        // If failed, keep in keys dictionary so we can retry next time
+            let jsonString = try await KeychainHelper.shared.read(for: "SparklePrompt_AllAPIKeys")
+            if let data = jsonString.data(using: .utf8),
+               let dict = try? JSONDecoder().decode([String: String].self, from: data) {
+                for (k, v) in dict {
+                    if let provider = AIProvider(rawValue: k) {
+                        self.providerKeys[provider] = v
                     }
                 }
+                loadedFromUnified = true
+                print("✅ Successfully loaded all API keys from unified Keychain item.")
             }
+        } catch KeychainHelper.KeychainError.notFound {
+            // Normal first run or needs migration
+        } catch {
+            print("⚠️ Reading unified Keychain item failed: \(error)")
+        }
 
-            if keysModified {
+        if !loadedFromUnified {
+            print("🔄 Unified Keychain item not found. Initiating migration...")
+            
+            // Migrate legacy keys from UserDefaults if present
+            if var keys = UserDefaults.standard.dictionary(forKey: "Pref_providerKeys") as? [String: String] {
+                for (k, v) in keys {
+                    if let p = AIProvider(rawValue: k) {
+                        providerKeys[p] = v
+                        keys.removeValue(forKey: k)
+                    }
+                }
                 if keys.isEmpty {
                     UserDefaults.standard.removeObject(forKey: "Pref_providerKeys")
                 } else {
                     UserDefaults.standard.set(keys, forKey: "Pref_providerKeys")
                 }
             }
-        } else {
-            // Optimization: Only load the current active provider's key on startup.
-            // This reduces the number of Keychain prompts to at most one.
+
+            // Migrate legacy individual Keychain items
             do {
-                let saved = try await KeychainHelper.shared.read(for: "APIKey_\(aiProvider.rawValue)")
-                providerKeys[aiProvider] = saved
-            } catch KeychainHelper.KeychainError.notFound {
-                // Normal initial state, ignore
-            } catch {
-                print("⚠️ Initial Keychain read failed: \(error)")
-                self.apiTestStatus = "读取保存的 API Key 失败: \(error.localizedDescription)"
+                if let oldKey = try? await KeychainHelper.shared.read(for: "APIKey_OpenAI 兼容") {
+                    providerKeys[.openAICompatible1] = oldKey
+                }
+            }
+            
+            for provider in AIProvider.allCases {
+                guard provider != .mstyOllama && provider != .mstyMLX else { continue }
+                if providerKeys[provider] != nil { continue }
+                do {
+                    let saved = try await KeychainHelper.shared.read(for: "APIKey_\(provider.rawValue)")
+                    providerKeys[provider] = saved
+                } catch {
+                    // Ignore
+                }
+            }
+
+            // Save the migrated keys to the unified Keychain item
+            await saveAllKeysToUnifiedKeychain()
+
+            // Cleanup legacy individual Keychain items
+            KeychainHelper.shared.delete(for: "APIKey_OpenAI 兼容")
+            for provider in AIProvider.allCases {
+                KeychainHelper.shared.delete(for: "APIKey_\(provider.rawValue)")
             }
         }
 
+        // 2. Load provider configuration dictionaries from UserDefaults
         if let urls = UserDefaults.standard.dictionary(forKey: "Pref_providerURLs") as? [String: String] {
             urls.forEach { if let p = AIProvider(rawValue: $0) { providerURLs[p] = $1 } }
         }
@@ -1135,11 +1144,14 @@ final class SparklePromptViewModel: ObservableObject {
             selectedModels.forEach { if let p = AIProvider(rawValue: $0) { providerSelectedModels[p] = $1 } }
         }
 
-        // Sync current active fields
-        self.aiAPIKey = providerKeys[aiProvider] ?? (((aiProvider == .mstyOllama || aiProvider == .mstyMLX) ? "not-needed" : ""))
-        // No need to call loadActiveProviderKey here as it will be called by aiProvider's didSet
-        // if memory cache is empty, OR it was already loaded in line 687.
+        // 3. Load main provider configuration
+        if let providerRaw = UserDefaults.standard.string(forKey: "Pref_aiProvider"),
+           let provider = AIProvider(rawValue: providerRaw) {
+            self.aiProvider = provider
+        }
 
+        // 4. Sync current active fields
+        self.aiAPIKey = providerKeys[aiProvider] ?? (((aiProvider == .mstyOllama || aiProvider == .mstyMLX) ? "not-needed" : ""))
         self.aiBaseURL = providerURLs[aiProvider] ?? aiProvider.defaultBaseURL
         self.availableModels = providerModels[aiProvider] ?? []
         self.aiModel = providerSelectedModels[aiProvider] ?? ""
@@ -1182,39 +1194,6 @@ final class SparklePromptViewModel: ObservableObject {
         }
         lineCache.removeAll(keepingCapacity: true)
         updateAttributedText()
-    }
-
-    /// Loads the API key for the currently selected provider from Keychain.
-    func loadActiveProviderKey() async {
-        let current = aiProvider
-
-        // 🛡️ [1] 优先检查内存缓存：如果内存中已有值，则跳过 Keychain 读取
-        // 这能极大地减少触发 macOS 授权弹窗的频率（仅需在应用启动或首次配置时验证一次）
-        if let cachedValue = providerKeys[current], !cachedValue.isEmpty {
-            self.aiAPIKey = cachedValue
-            return
-        }
-
-        guard current != .mstyOllama && current != .mstyMLX else { return }
-
-        // 🛡️ [2] 仅在内存为空时读取 Keychain
-        do {
-            let saved = try await KeychainHelper.shared.read(for: "APIKey_\(current.rawValue)")
-            // 双重检查 provider 没变，防止异步加载过程中的竞态
-            if self.aiProvider == current {
-                self.aiAPIKey = saved
-                self.providerKeys[current] = saved
-            }
-        } catch KeychainHelper.KeychainError.notFound {
-            if self.aiProvider == current {
-                self.aiAPIKey = ""
-            }
-        } catch {
-            print("⚠️ Keychain read error for \(current.rawValue): \(error)")
-            if self.aiProvider == current {
-                self.apiTestStatus = "读取保存的 API Key 失败: \(error.localizedDescription)"
-            }
-        }
     }
 
     /// Lightweight save: only persists AI config to UserDefaults.
@@ -1322,21 +1301,32 @@ final class SparklePromptViewModel: ObservableObject {
     }
 
 
+    private func saveAllKeysToUnifiedKeychain() async {
+        // Filter out empty keys to keep Keychain clean
+        let stringDict = providerKeys.reduce(into: [String: String]()) { 
+            if !$1.value.isEmpty {
+                $0[$1.key.rawValue] = $1.value 
+            }
+        }
+        if let data = try? JSONEncoder().encode(stringDict),
+           let jsonString = String(data: data, encoding: .utf8) {
+            do {
+                try await KeychainHelper.shared.save(jsonString, for: "SparklePrompt_AllAPIKeys")
+                print("✅ Successfully saved all API keys to unified Keychain item.")
+            } catch {
+                print("❌ Failed to save unified Keychain item: \(error)")
+            }
+        }
+    }
+
     /// Full save: persists AI config to UserDefaults AND API keys to Keychain.
     /// Only called on explicit user action (e.g. clicking "保存" or closing settings).
     func saveAISettings() async {
-        // 1. 先保存基础配置到 UserDefaults
+        // 1. 先保存基础配置 to UserDefaults
         saveAISettingsToDefaults()
 
-        // 2. 仅持久化当前活跃平台的 Key 到 Keychain (如果该 Key 存在且非空)
-        // 这样可以避免每次保存都触发所有平台的 Keychain 授权弹窗
-        if let keyToSave = providerKeys[aiProvider], !keyToSave.isEmpty {
-            do {
-                try await KeychainHelper.shared.save(keyToSave, for: "APIKey_\(aiProvider.rawValue)")
-            } catch {
-                print("❌ Failed to save \(aiProvider.rawValue) key to Keychain: \(error)")
-            }
-        }
+        // 2. 将所有内存中的 API Key 统一序列化并保存至 Keychain 中唯一的 item
+        await saveAllKeysToUnifiedKeychain()
     }
 
     func showConfigFileInFinder() {
@@ -1380,9 +1370,11 @@ final class SparklePromptViewModel: ObservableObject {
         providerSelectedModels.removeAll()
 
         // 2.1 Clear Keychain items
+        KeychainHelper.shared.delete(for: "SparklePrompt_AllAPIKeys")
         AIProvider.allCases.forEach { p in
             KeychainHelper.shared.delete(for: "APIKey_\(p.rawValue)")
         }
+        KeychainHelper.shared.delete(for: "APIKey_OpenAI 兼容")
 
         // 3. Reset properties to defaults
         aiProvider = .deepseek
