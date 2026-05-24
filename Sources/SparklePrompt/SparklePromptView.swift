@@ -66,10 +66,10 @@ struct SparklePromptView: View {
                                   Button(action: { viewModel.showSettings = true }) {
                                       Image(systemName: "shield.fill")
                                           .font(.system(size: 12, weight: .semibold))
-                                          .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.28))
+                                          .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.10))
                                           .frame(width: 28, height: 28)
                                           .background(
-                                              viewModel.presentationStyle.secondaryTextColor.opacity(0.04),
+                                              viewModel.presentationStyle.secondaryTextColor.opacity(0.02),
                                               in: Circle()
                                           )
                                   }
