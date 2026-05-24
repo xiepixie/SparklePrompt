@@ -56,7 +56,8 @@ struct AIRole: Codable, Identifiable, Equatable {
 
 enum AIProvider: String, Codable, CaseIterable {
     case deepseek = "DeepSeek"
-    case openAICompatible = "OpenAI 兼容"
+    case openAICompatible1 = "OpenAI 兼容 1"
+    case openAICompatible2 = "OpenAI 兼容 2"
     case anthropic = "Anthropic"
     case ollama = "Ollama 原生"
     case mstyOllama = "Msty Ollama"
@@ -65,14 +66,56 @@ enum AIProvider: String, Codable, CaseIterable {
     var defaultBaseURL: String {
         switch self {
         case .deepseek: return "https://api.deepseek.com"
-        case .openAICompatible: return "https://api.openai.com"
+        case .openAICompatible1, .openAICompatible2: return "https://api.openai.com"
         case .anthropic: return "https://api.anthropic.com"
         case .ollama: return "http://localhost:11434"
         case .mstyOllama: return "http://localhost:11964/v1"
         case .mstyMLX: return "http://localhost:11973/v1"
         }
     }
+
+    var isLocal: Bool {
+        switch self {
+        case .ollama, .mstyOllama, .mstyMLX:
+            return true
+        default:
+            return false
+        }
+    }
 }
+
+enum ProviderStatus: Equatable {
+    case notConfigured
+    case localReady
+    case waitingForTest
+    case testing
+    case success(modelCount: Int)
+    case configError(code: Int, message: String)
+    case networkError(message: String)
+    case customError(message: String)
+
+    var displayText: String {
+        switch self {
+        case .notConfigured: return "未配置 API Key"
+        case .localReady: return "本地服务就绪"
+        case .waitingForTest: return "等待测试连接"
+        case .testing: return "正在验证连接..."
+        case .success(let count): return "测试成功，可使用 \(count) 个模型"
+        case .configError(let code, let msg): return "配置错误 (HTTP \(code)): \(msg)"
+        case .networkError(let msg): return "网络错误: \(msg)"
+        case .customError(let msg): return msg
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .localReady, .success: return .green
+        case .configError, .networkError, .notConfigured: return .red
+        case .waitingForTest, .testing, .customError: return .yellow
+        }
+    }
+}
+
 
 enum ShortcutAction: String, CaseIterable, Codable {
     case playPause = "播放/暂停"
@@ -130,7 +173,6 @@ final class SparklePromptViewModel: ObservableObject {
     }
     @Published var isCodeMode: Bool = false {
         didSet {
-            lineCache.removeAll(keepingCapacity: true)
             updateAttributedText()
             if !isInternalLoading { saveSubject.send() }
         }
@@ -141,29 +183,36 @@ final class SparklePromptViewModel: ObservableObject {
     private(set) var isCodeDetected: Bool = false
 
     // MARK: - Line Rendering Cache
-    private struct LineCacheKey: Hashable {
-        let text: String
-        let isThinkBlock: Bool
-        let isCodeBlock: Bool
-        let isCodeMode: Bool
-        let isPrivacyMode: Bool
-        let fontSize: Int
-        let lineSpacing: Int
-        let styleSignature: String
+    private static let maxLineCacheEntries = 25_000
+    private static let markdownProbeCharacters = CharacterSet(charactersIn: "#*_`[]!>\\")
+    private var lineCache: [String: AttributedString] = [:]
+    private var suppressNextTextUpdate = false
+    private var renderingTask: Task<Void, Never>?
+
+    private struct LineRangeInfo {
+        let range: NSRange
+        let styleType: StyleType
     }
-    private var lineCache: [LineCacheKey: AttributedString] = [:]
+    
+    private enum StyleType {
+        case think
+        case code
+        case normal
+    }
+
+    private static func mayContainMarkdown(_ line: String) -> Bool {
+        line.rangeOfCharacter(from: markdownProbeCharacters) != nil
+    }
     @Published var isPlaying: Bool = false
     @Published var speed: Double = 45 { didSet { if !isInternalLoading { saveSubject.send() } } }
     @Published var fontSize: Double = 20 {
         didSet {
-            lineCache.removeAll(keepingCapacity: true)
             updateAttributedText()
             if !isInternalLoading { saveSubject.send() }
         }
     }
     @Published var lineSpacing: Double = 10 {
         didSet {
-            lineCache.removeAll(keepingCapacity: true)
             updateAttributedText()
             if !isInternalLoading { saveSubject.send() }
         }
@@ -206,7 +255,6 @@ final class SparklePromptViewModel: ObservableObject {
 
     @Published var textColor: Color = .white {
         didSet {
-            lineCache.removeAll(keepingCapacity: true)
             updateAttributedText()
             if !isInternalLoading { saveSubject.send() }
         }
@@ -214,7 +262,6 @@ final class SparklePromptViewModel: ObservableObject {
     @Published var readingLineColor: Color = Color(red: 245/255, green: 158/255, blue: 11/255) { didSet { if !isInternalLoading { saveSubject.send() } } }
     @Published var accentColor: Color = Color(red: 139/255, green: 92/255, blue: 246/255) {
         didSet {
-            lineCache.removeAll(keepingCapacity: true)
             updateAttributedText()
             if !isInternalLoading { saveSubject.send() }
         }
@@ -235,10 +282,8 @@ final class SparklePromptViewModel: ObservableObject {
     private var privacyExitConfirmationDeadline: Date?
     private var lastPrivacyTransitionTime: Date = Date.distantPast
 
-    /// ✨ 隐私防护模式 (合并：隐藏图标 + 录屏防护)
     @Published var isPrivacyMode: Bool = false {
         didSet {
-            lineCache.removeAll(keepingCapacity: true)
             updateAttributedText()
             windowController?.setStealthMode(isPrivacyMode)
             windowController?.setHideFromCapture(isPrivacyMode)
@@ -456,7 +501,10 @@ final class SparklePromptViewModel: ObservableObject {
     }
     @Published var debouncedSearchQuery: String = ""
     private let searchSubject = PassthroughSubject<String, Never>()
-    @Published var attributedText: AttributedString = AttributedString("")
+    @Published var attributedText: AttributedString = AttributedString("") {
+        didSet { renderedTextVersion &+= 1 }
+    }
+    @Published private(set) var renderedTextVersion: Int = 0
 
     // MARK: - AI Configuration (persisted via settings window)
 
@@ -471,14 +519,14 @@ final class SparklePromptViewModel: ObservableObject {
             defer { isUpdatingProvider = false }
 
             // Restore from per-provider storage
-            self.aiAPIKey = providerKeys[aiProvider] ?? (([.mstyOllama, .mstyMLX].contains(aiProvider)) ? "not-needed" : "")
+            self.aiAPIKey = providerKeys[aiProvider] ?? (((aiProvider == .mstyOllama || aiProvider == .mstyMLX)) ? "not-needed" : "")
             self.aiBaseURL = providerURLs[aiProvider] ?? aiProvider.defaultBaseURL
             self.availableModels = providerModels[aiProvider] ?? []
             self.aiModel = providerSelectedModels[aiProvider] ?? ""
-            self.apiTestStatus = nil
+            self.apiTestStatus = providerStatuses[aiProvider]?.displayText
 
             // On-demand load key if NOT already in memory cache
-            if (self.aiAPIKey.isEmpty || providerKeys[aiProvider] == nil) && ![.mstyOllama, .mstyMLX].contains(aiProvider) {
+            if (self.aiAPIKey.isEmpty || providerKeys[aiProvider] == nil) && aiProvider != .mstyOllama && aiProvider != .mstyMLX {
                 Task { await loadActiveProviderKey() }
             }
 
@@ -496,7 +544,7 @@ final class SparklePromptViewModel: ObservableObject {
     @Published var availableModels: [String] = [] { didSet { if !isUpdatingProvider { providerModels[aiProvider] = availableModels }; if !isInternalLoading { saveSubject.send() } } }
 
     // MARK: - Provider Priority and Failover
-    @Published var providerPriority: [AIProvider] = [.deepseek, .openAICompatible, .anthropic, .ollama, .mstyOllama, .mstyMLX] { didSet { if !isInternalLoading { saveSubject.send() } } }
+    @Published var providerPriority: [AIProvider] = [.deepseek, .openAICompatible1, .openAICompatible2, .anthropic, .ollama, .mstyOllama, .mstyMLX] { didSet { if !isInternalLoading { saveSubject.send() } } }
     @Published var enableFailover: Bool = true { didSet { if !isInternalLoading { saveSubject.send() } } }
 
     // MARK: - Per-provider persistence dictionaries
@@ -504,7 +552,7 @@ final class SparklePromptViewModel: ObservableObject {
     private var providerURLs: [AIProvider: String] = [:]
     private var providerModels: [AIProvider: [String]] = [:]
     private var providerSelectedModels: [AIProvider: String] = [:]
-    private var providerTestStatus: [AIProvider: String] = [:]
+    @Published var providerStatuses: [AIProvider: ProviderStatus] = [:]
 
     @Published var aiRoles: [AIRole] = [
         AIRole(name: "LeetCode 刷题助手", prompt: #"""
@@ -647,6 +695,10 @@ final class SparklePromptViewModel: ObservableObject {
             .throttle(for: .milliseconds(100), scheduler: RunLoop.main, latest: true)
             .sink { [weak self] in
                 guard let self = self else { return }
+                if self.suppressNextTextUpdate {
+                    self.suppressNextTextUpdate = false
+                    return
+                }
                 self.updateAttributedText()
                 // 编辑模式下不触发自动保存，退出编辑时统一保存
                 if !self.isInternalLoading && !self.isEditing {
@@ -664,22 +716,19 @@ final class SparklePromptViewModel: ObservableObject {
         speechTimer?.invalidate()
     }
 
-    private func updateAttributedText() {
-        // 编辑模式下跳过：EditorOverlay 覆盖了提词器，格式化文本不可见
-        guard !isEditing else { return }
-
-        // 缓存容量保护
-        if lineCache.count > 5000 {
-            lineCache.removeAll(keepingCapacity: true)
-        }
-
-        let lines = text.components(separatedBy: .newlines)
-        var combined = AttributedString()
+    private func renderLines(
+        _ lines: [String],
+        range: Range<Int>,
+        isInsideThinkBlock: inout Bool,
+        isInsideCodeBlock: inout Bool
+    ) -> AttributedString {
         let baseSize = fontSize
-        var isInsideThinkBlock = false
-        var isInsideCodeBlock = false
+        var combined = AttributedString()
+        var currentTotalLength = 0
+        var lineRanges: [LineRangeInfo] = []
 
-        for (index, line) in lines.enumerated() {
+        for index in range {
+            let line = lines[index]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
             // 检测并隐藏思考块标记
@@ -700,77 +749,48 @@ final class SparklePromptViewModel: ObservableObject {
 
             if trimmed.isEmpty {
                 combined.append(AttributedString("\n"))
+                currentTotalLength += 1
                 continue
             }
 
-            // 🚀 行级缓存：AI 流式输出时只有尾部行变化，缓存命中率接近 100%
-            let styleSignature = "\(isPrivacyMode)-\(fontSize)-\(lineSpacing)-\(textColor.description)-\(accentColor.description)"
-            let cacheKey = LineCacheKey(
-                text: line,
-                isThinkBlock: isInsideThinkBlock,
-                isCodeBlock: isInsideCodeBlock,
-                isCodeMode: isCodeMode,
-                isPrivacyMode: isPrivacyMode,
-                fontSize: Int(fontSize),
-                lineSpacing: Int(lineSpacing),
-                styleSignature: styleSignature
-            )
-            if let cached = lineCache[cacheKey] {
-                combined.append(cached)
-                if index < lines.count - 1 { combined.append(AttributedString("\n")) }
-                continue
+            // 🚀 行级缓存：只缓存原始 Markdown 解析后的 AttributedString，与具体的视觉样式（字体大小、颜色等）解耦
+            if lineCache[line] == nil {
+                let parsed = Self.mayContainMarkdown(line)
+                    ? ((try? AttributedString(markdown: line)) ?? AttributedString(line))
+                    : AttributedString(line)
+                lineCache[line] = parsed
             }
 
-            var lineAttr = (try? AttributedString(markdown: line)) ?? AttributedString(line)
+            var lineAttr = lineCache[line]!
+            let styleType: StyleType
 
             if isInsideThinkBlock {
-                // 隐私模式下隐藏思考块
+                styleType = .think
                 if isPrivacyMode {
                     lineAttr = AttributedString("")
                 } else {
-                    // 🧠 思考块样式：斜体、小字 (75%)、灰色、紧凑行距
+                    // 🧠 思考块样式：斜体、小字 (75%)、灰色
                     let thinkSize = baseSize * 0.75
                     let thinkColor = Color.gray.opacity(0.65)
-
-                    // 应用基础字体和颜色（带斜体）
-                    lineAttr.font = .system(size: thinkSize, weight: .regular, design: .default).italic()
-                    lineAttr.foregroundColor = thinkColor
-
-                    // 🛠️ 修复 Sendable 警告：使用 NSAttributedString 桥接
-                    let paragraphStyle = NSMutableParagraphStyle()
-                    paragraphStyle.lineSpacing = lineSpacing * 0.3
-                    paragraphStyle.alignment = .center
-
-                    let nsAttr = NSMutableAttributedString(lineAttr)
-                    nsAttr.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: nsAttr.length))
-                    lineAttr = AttributedString(nsAttr)
+                    lineAttr.swiftUI.font = Font.system(size: thinkSize, weight: Font.Weight.regular, design: Font.Design.default).italic()
+                    lineAttr.swiftUI.foregroundColor = thinkColor
                 }
             } else if isInsideCodeBlock || isCodeMode {
-                // 💻 代码块样式：等宽字体、小字 (90%)、左对齐 + 首行/换行缩进、紧凑行距
+                styleType = .code
+                // 💻 代码块样式：等宽字体、小字 (90%)
                 let codeSize = baseSize * 0.9
-
-                // 先保留 Markdown inline 样式（加粗颜色）
                 for run in lineAttr.runs {
-                    if let inline = run.inlinePresentationIntent, inline.contains(.stronglyEmphasized) {
-                        lineAttr[run.range].foregroundColor = presentationStyle.accentColor
+                    if let inline = run.inlinePresentationIntent, inline.contains(InlinePresentationIntent.stronglyEmphasized) {
+                        lineAttr[run.range].swiftUI.foregroundColor = presentationStyle.accentColor
                     }
-                    lineAttr[run.range].font = .system(size: codeSize, weight: .regular, design: .monospaced)
-                    if lineAttr[run.range].foregroundColor == nil {
-                        lineAttr[run.range].foregroundColor = presentationStyle.codeTextColor
+                    lineAttr[run.range].swiftUI.font = Font.system(size: codeSize, weight: Font.Weight.regular, design: Font.Design.monospaced)
+                    if lineAttr[run.range].swiftUI.foregroundColor == nil {
+                        lineAttr[run.range].swiftUI.foregroundColor = presentationStyle.codeTextColor
                     }
                 }
-
-                let paragraphStyle = NSMutableParagraphStyle()
-                paragraphStyle.lineSpacing = lineSpacing * 0.8
-                paragraphStyle.alignment = .left
-                paragraphStyle.firstLineHeadIndent = 20
-                paragraphStyle.headIndent = 20
-
-                let nsAttr = NSMutableAttributedString(lineAttr)
-                nsAttr.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: nsAttr.length))
-                lineAttr = AttributedString(nsAttr)
             } else {
-                // 📝 正文样式：大字、粗体、标准行距
+                styleType = .normal
+                // 📝 正文样式：大字、粗体
                 for run in lineAttr.runs {
                     var runSize: CGFloat = baseSize
                     var weight: Font.Weight = .semibold
@@ -784,36 +804,167 @@ final class SparklePromptViewModel: ObservableObject {
                         }
                     }
 
-                    if let inline = run.inlinePresentationIntent, inline.contains(.stronglyEmphasized) {
+                    if let inline = run.inlinePresentationIntent, inline.contains(InlinePresentationIntent.stronglyEmphasized) {
                         weight = .heavy
-                        lineAttr[run.range].foregroundColor = presentationStyle.accentColor
+                        lineAttr[run.range].swiftUI.foregroundColor = presentationStyle.accentColor
                     }
 
-                    lineAttr[run.range].font = .system(size: runSize, weight: weight, design: .default)
-                    if lineAttr[run.range].foregroundColor == nil {
-                        lineAttr[run.range].foregroundColor = presentationStyle.primaryTextColor
+                    lineAttr[run.range].swiftUI.font = Font.system(size: runSize, weight: weight, design: Font.Design.default)
+                    if lineAttr[run.range].swiftUI.foregroundColor == nil {
+                        lineAttr[run.range].swiftUI.foregroundColor = presentationStyle.primaryTextColor
                     }
                 }
-
-                // 🛠️ 修复 Sendable 警告：使用 NSAttributedString 桥接
-                let paragraphStyle = NSMutableParagraphStyle()
-                paragraphStyle.lineSpacing = lineSpacing
-                paragraphStyle.alignment = .center
-
-                let nsAttr = NSMutableAttributedString(lineAttr)
-                nsAttr.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: nsAttr.length))
-                lineAttr = AttributedString(nsAttr)
             }
 
-            lineCache[cacheKey] = lineAttr
-
+            let lineLength = NSAttributedString(lineAttr).length
+            let startLoc = currentTotalLength
+            currentTotalLength += lineLength
             combined.append(lineAttr)
+
+            if lineLength > 0 {
+                let nsRange = NSRange(location: startLoc, length: lineLength)
+                lineRanges.append(LineRangeInfo(range: nsRange, styleType: styleType))
+            }
 
             if index < lines.count - 1 {
                 combined.append(AttributedString("\n"))
+                currentTotalLength += 1
             }
         }
-        self.attributedText = combined
+
+        // 批量将拼装好的字符转换为 NSMutableAttributedString 渲染段落样式，
+        // 彻底免去在循环体内 5000+ 次重复转换 of O(N) 桥接性能开销
+        let nsAttr = NSMutableAttributedString(combined)
+        for info in lineRanges {
+            let paragraphStyle = NSMutableParagraphStyle()
+            switch info.styleType {
+            case .think:
+                paragraphStyle.lineSpacing = lineSpacing * 0.3
+                paragraphStyle.alignment = .center
+            case .code:
+                paragraphStyle.lineSpacing = lineSpacing * 0.8
+                paragraphStyle.alignment = .left
+                paragraphStyle.firstLineHeadIndent = 20
+                paragraphStyle.headIndent = 20
+            case .normal:
+                paragraphStyle.lineSpacing = lineSpacing
+                paragraphStyle.alignment = .center
+            }
+            nsAttr.addAttribute(.paragraphStyle, value: paragraphStyle, range: info.range)
+        }
+
+        return AttributedString(nsAttr)
+    }
+
+    private func updateAttributedText() {
+        // 编辑模式下跳过：EditorOverlay 覆盖了提词器，格式化文本不可见
+        guard !isEditing else { return }
+
+        // 缓存容量保护
+        if lineCache.count > Self.maxLineCacheEntries {
+            lineCache.removeAll(keepingCapacity: true)
+        }
+
+        // 取消前一个正在运行的后台渲染任务
+        renderingTask?.cancel()
+        renderingTask = nil
+
+        let lines = text.components(separatedBy: .newlines)
+        
+        var isInsideThinkBlock = false
+        var isInsideCodeBlock = false
+        
+        let initialChunkSize = 200
+        
+        if lines.count <= initialChunkSize {
+            // 小文件：直接同步完整渲染
+            self.attributedText = renderLines(lines, range: 0..<lines.count, isInsideThinkBlock: &isInsideThinkBlock, isInsideCodeBlock: &isInsideCodeBlock)
+        } else {
+            // 大文件：
+            // 1. 同步渲染前 200 行以最快速度显示，避免首屏切换卡死
+            self.attributedText = renderLines(lines, range: 0..<initialChunkSize, isInsideThinkBlock: &isInsideThinkBlock, isInsideCodeBlock: &isInsideCodeBlock)
+            
+            // 获取当前已缓存的 key 集合（值类型，Safe for Sendable）
+            let cachedKeys = Set(self.lineCache.keys)
+            
+            // 捕获同步渲染后的块状态作为初始状态
+            let initialThink = isInsideThinkBlock
+            let initialCode = isInsideCodeBlock
+            
+            // 2. 启动后台异步任务进行 Markdown 解析与渐进式渲染
+            renderingTask = Task {
+                var taskThink = initialThink
+                var taskCode = initialCode
+                
+                var currentIndex = initialChunkSize
+                let chunkSize = 500
+                
+                while currentIndex < lines.count {
+                    if Task.isCancelled { break }
+                    
+                    let endLimit = min(currentIndex + chunkSize, lines.count)
+                    let chunkRange = currentIndex..<endLimit
+                    
+                    // 在后台线程（非 MainActor）中解析 Markdown，彻底解放主线程
+                    var parsedChunk: [String: AttributedString] = [:]
+                    for idx in chunkRange {
+                        let line = lines[idx]
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        if trimmed.isEmpty || line.hasPrefix("```") || trimmed == "<think>" || trimmed == "</think>" {
+                            continue
+                        }
+                        if !cachedKeys.contains(line) {
+                            let parsed = Self.mayContainMarkdown(line)
+                                ? ((try? AttributedString(markdown: line)) ?? AttributedString(line))
+                                : AttributedString(line)
+                            parsedChunk[line] = parsed
+                        }
+                    }
+                    
+                    if Task.isCancelled { break }
+                    
+                    // 回到 MainActor 合并已解析缓存并执行视觉渲染
+                    let (updatedThink, updatedCode) = await MainActor.run { [weak self] () -> (Bool, Bool) in
+                        guard let self = self else { return (taskThink, taskCode) }
+                        
+                        for (line, attr) in parsedChunk {
+                            self.lineCache[line] = attr
+                        }
+                        
+                        var think = taskThink
+                        var code = taskCode
+                        
+                        // 此时 renderLines 100% 命中缓存，运行时间 < 1ms
+                        let chunkAttr = self.renderLines(
+                            lines,
+                            range: chunkRange,
+                            isInsideThinkBlock: &think,
+                            isInsideCodeBlock: &code
+                        )
+                        
+                        if !Task.isCancelled {
+                            self.attributedText.append(chunkAttr)
+                        }
+                        
+                        return (think, code)
+                    }
+                    
+                    taskThink = updatedThink
+                    taskCode = updatedCode
+                    currentIndex = endLimit
+                    
+                    // 挂起并休眠 15ms，交出 CPU 时间片，确保 RunLoop 极其流畅地响应用户滚动与交互
+                    try? await Task.sleep(nanoseconds: 15_000_000)
+                }
+                
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
+                    if !Task.isCancelled {
+                        self.renderingTask = nil
+                    }
+                }
+            }
+        }
     }
 
     func notifySaveSuccess() {
@@ -879,6 +1030,45 @@ final class SparklePromptViewModel: ObservableObject {
         isInternalLoading = true
         defer { isInternalLoading = false }
 
+        // 1. Perform migration from "OpenAI 兼容" to "OpenAI 兼容 1"
+        if let providerRaw = UserDefaults.standard.string(forKey: "Pref_aiProvider"),
+           providerRaw == "OpenAI 兼容" {
+            UserDefaults.standard.set("OpenAI 兼容 1", forKey: "Pref_aiProvider")
+        }
+
+        func migrateUserDefaultsDict(key: String) {
+            if var dict = UserDefaults.standard.dictionary(forKey: key) {
+                if let val = dict["OpenAI 兼容"] {
+                    dict["OpenAI 兼容 1"] = val
+                    dict.removeValue(forKey: "OpenAI 兼容")
+                    UserDefaults.standard.set(dict, forKey: key)
+                }
+            }
+        }
+        migrateUserDefaultsDict(key: "Pref_providerURLs")
+        migrateUserDefaultsDict(key: "Pref_providerModels")
+        migrateUserDefaultsDict(key: "Pref_providerSelectedModels")
+        migrateUserDefaultsDict(key: "Pref_providerKeys")
+
+        // Migrate "Pref_providerPriority"
+        if var priorityData = UserDefaults.standard.array(forKey: "Pref_providerPriority") as? [String] {
+            if let idx = priorityData.firstIndex(of: "OpenAI 兼容") {
+                priorityData[idx] = "OpenAI 兼容 1"
+                if !priorityData.contains("OpenAI 兼容 2") {
+                    priorityData.insert("OpenAI 兼容 2", at: idx + 1)
+                }
+                UserDefaults.standard.set(priorityData, forKey: "Pref_providerPriority")
+            }
+        }
+
+        // Migrate Keychain API key if exists
+        do {
+            if let oldKey = try? await KeychainHelper.shared.read(for: "APIKey_OpenAI 兼容") {
+                try? await KeychainHelper.shared.save(oldKey, for: "APIKey_OpenAI 兼容 1")
+                KeychainHelper.shared.delete(for: "APIKey_OpenAI 兼容")
+            }
+        }
+
         // Load main provider
         if let providerRaw = UserDefaults.standard.string(forKey: "Pref_aiProvider"),
            let provider = AIProvider(rawValue: providerRaw) {
@@ -887,32 +1077,40 @@ final class SparklePromptViewModel: ObservableObject {
 
         // Load per-provider dictionaries
         if var keys = UserDefaults.standard.dictionary(forKey: "Pref_providerKeys") as? [String: String] {
-            // 🛠️ 优化迁移逻辑：每成功迁移一个就删除一个，防止授权取消导致的死循环弹窗
+            var keysModified = false
             for (k, v) in keys {
                 if let p = AIProvider(rawValue: k) {
                     do {
                         try await KeychainHelper.shared.save(v, for: "APIKey_\(k)")
                         providerKeys[p] = v
-                        // 迁移成功，从旧字典中移除并立即持久化
                         keys.removeValue(forKey: k)
-                        UserDefaults.standard.set(keys, forKey: "Pref_providerKeys")
+                        keysModified = true
                         print("✅ Keychain migration successful for \(k)")
                     } catch {
                         print("⚠️ Keychain migration failed for \(k): \(error)")
-                        // 如果失败（如用户取消），保留在 keys 中，下次重试
+                        // If failed, keep in keys dictionary so we can retry next time
                     }
                 }
             }
 
-            // 如果所有 Key 都迁移完了，彻底移除该键
-            if keys.isEmpty {
-                UserDefaults.standard.removeObject(forKey: "Pref_providerKeys")
+            if keysModified {
+                if keys.isEmpty {
+                    UserDefaults.standard.removeObject(forKey: "Pref_providerKeys")
+                } else {
+                    UserDefaults.standard.set(keys, forKey: "Pref_providerKeys")
+                }
             }
         } else {
             // Optimization: Only load the current active provider's key on startup.
             // This reduces the number of Keychain prompts to at most one.
-            if let saved = try? await KeychainHelper.shared.read(for: "APIKey_\(aiProvider.rawValue)") {
+            do {
+                let saved = try await KeychainHelper.shared.read(for: "APIKey_\(aiProvider.rawValue)")
                 providerKeys[aiProvider] = saved
+            } catch KeychainHelper.KeychainError.notFound {
+                // Normal initial state, ignore
+            } catch {
+                print("⚠️ Initial Keychain read failed: \(error)")
+                self.apiTestStatus = "读取保存的 API Key 失败: \(error.localizedDescription)"
             }
         }
 
@@ -927,7 +1125,7 @@ final class SparklePromptViewModel: ObservableObject {
         }
 
         // Sync current active fields
-        self.aiAPIKey = providerKeys[aiProvider] ?? (([.mstyOllama, .mstyMLX].contains(aiProvider)) ? "not-needed" : "")
+        self.aiAPIKey = providerKeys[aiProvider] ?? (((aiProvider == .mstyOllama || aiProvider == .mstyMLX) ? "not-needed" : ""))
         // No need to call loadActiveProviderKey here as it will be called by aiProvider's didSet
         // if memory cache is empty, OR it was already loaded in line 687.
 
@@ -986,14 +1184,24 @@ final class SparklePromptViewModel: ObservableObject {
             return
         }
 
-        guard ![.mstyOllama, .mstyMLX].contains(current) else { return }
+        guard current != .mstyOllama && current != .mstyMLX else { return }
 
         // 🛡️ [2] 仅在内存为空时读取 Keychain
-        if let saved = try? await KeychainHelper.shared.read(for: "APIKey_\(current.rawValue)") {
+        do {
+            let saved = try await KeychainHelper.shared.read(for: "APIKey_\(current.rawValue)")
             // 双重检查 provider 没变，防止异步加载过程中的竞态
             if self.aiProvider == current {
                 self.aiAPIKey = saved
                 self.providerKeys[current] = saved
+            }
+        } catch KeychainHelper.KeychainError.notFound {
+            if self.aiProvider == current {
+                self.aiAPIKey = ""
+            }
+        } catch {
+            print("⚠️ Keychain read error for \(current.rawValue): \(error)")
+            if self.aiProvider == current {
+                self.apiTestStatus = "读取保存的 API Key 失败: \(error.localizedDescription)"
             }
         }
     }
@@ -1039,43 +1247,27 @@ final class SparklePromptViewModel: ObservableObject {
 
     // MARK: - AI Provider UI Helpers
 
-    func getProviderStatus(_ provider: AIProvider) -> String {
-        if let status = providerTestStatus[provider] {
+    func getProviderStatus(_ provider: AIProvider) -> ProviderStatus {
+        if let status = providerStatuses[provider] {
             return status
         }
 
-        if [.ollama, .mstyOllama, .mstyMLX].contains(provider) {
-            return "本地服务就绪"
+        if provider.isLocal {
+            return .localReady
         }
 
         let key = getAPIKey(for: provider)
-        return key.isEmpty ? "未配置 API Key" : "等待测试"
-    }
-
-    func getProviderStatusColor(_ provider: AIProvider) -> Color {
-        let status = providerTestStatus[provider] ?? ""
-        if status.contains("成功") || status.contains("就绪") { return .green }
-        if status.contains("失败") || status.contains("错误") { return .red }
-
-        let key = getAPIKey(for: provider)
-        let isLocal = [.ollama, .mstyOllama, .mstyMLX].contains(provider)
-        if !isLocal && key.isEmpty { return .red }
-
-        return .yellow // 待测试或正在测试
+        return key.isEmpty ? .notConfigured : .waitingForTest
     }
 
     var activeStatusText: String {
         if isTestingAPI { return "正在验证连接..." }
         if let status = apiTestStatus { return status }
-
-        let isLocal = [.ollama, .mstyOllama, .mstyMLX].contains(aiProvider)
-        if isLocal { return "\(aiProvider.rawValue) 就绪" }
-        if aiAPIKey.isEmpty { return "未配置 API Key" }
-        return "等待测试连接"
+        return getProviderStatus(aiProvider).displayText
     }
 
     var activeStatusColor: Color {
-        getProviderStatusColor(aiProvider)
+        getProviderStatus(aiProvider).color
     }
 
     // MARK: - Per-Provider Accessors
@@ -1189,6 +1381,7 @@ final class SparklePromptViewModel: ObservableObject {
         availableModels = []
         isCodeMode = false
         enableDeepSeekThinking = false
+        providerPriority = [.deepseek, .openAICompatible1, .openAICompatible2, .anthropic, .ollama, .mstyOllama, .mstyMLX]
         lineCache.removeAll()
         aiRoles = [
             AIRole(name: "LeetCode 刷题助手", prompt: #"""
@@ -1329,6 +1522,50 @@ final class SparklePromptViewModel: ObservableObject {
         if didMigrate || bookmarkMigrated {
             saveLibrary()
         }
+
+        // 启动后台异步加载管线，预先缓存本地磁盘上的脚本内容，避免同步读取卡顿
+        lazyLoadAllScriptsContent()
+    }
+
+    private func lazyLoadAllScriptsContent() {
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self = self else { return }
+            let currentWorkspaces = await MainActor.run { self.workspaces }
+
+            for wIndex in 0..<currentWorkspaces.count {
+                for sIndex in 0..<currentWorkspaces[wIndex].scripts.count {
+                    var script = currentWorkspaces[wIndex].scripts[sIndex]
+                    if script.content.isEmpty, let targetURL = script.resolveURL() {
+                        let targetScriptID = script.id
+                        let scriptTitle = script.title
+                        do {
+                            let access = targetURL.startAccessingSecurityScopedResource()
+                            defer { if access { targetURL.stopAccessingSecurityScopedResource() } }
+                            let loadedContent = try String(contentsOf: targetURL, encoding: .utf8)
+
+                            await MainActor.run {
+                                // 校验确保在加载期间内存中的内容未被用户修改或替换过
+                                if wIndex < self.workspaces.count &&
+                                   sIndex < self.workspaces[wIndex].scripts.count &&
+                                   self.workspaces[wIndex].scripts[sIndex].id == targetScriptID &&
+                                   self.workspaces[wIndex].scripts[sIndex].content.isEmpty {
+                                    self.workspaces[wIndex].scripts[sIndex].content = loadedContent
+
+                                    // 如果该剧本刚好当前激活，同步更新 text 及渲染视图
+                                    if wIndex == self.activeWorkspaceIndex && sIndex == self.activeScriptIndex {
+                                        self.suppressNextTextUpdate = true
+                                        self.text = loadedContent
+                                        self.updateAttributedText()
+                                    }
+                                }
+                            }
+                        } catch {
+                            print("⚠️ 后台加载剧本失败 [\(scriptTitle)]: \(error.localizedDescription)")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     func saveLibrary() {
@@ -1341,7 +1578,18 @@ final class SparklePromptViewModel: ObservableObject {
             }
         }
 
-        if let encoded = try? JSONEncoder().encode(workspaces) {
+        // 仅对未关联本地磁盘文件（url 为 nil）的剧本在 UserDefaults 中持久化正文，
+        // 关联了本地磁盘文件的剧本只持久化其元数据，正文内容动态加载。
+        var workspacesToSave = workspaces
+        for wIndex in 0..<workspacesToSave.count {
+            for sIndex in 0..<workspacesToSave[wIndex].scripts.count {
+                if workspacesToSave[wIndex].scripts[sIndex].url != nil {
+                    workspacesToSave[wIndex].scripts[sIndex].content = ""
+                }
+            }
+        }
+
+        if let encoded = try? JSONEncoder().encode(workspacesToSave) {
             UserDefaults.standard.set(encoded, forKey: workspacesKey)
         }
     }
@@ -1854,17 +2102,60 @@ final class SparklePromptViewModel: ObservableObject {
         activeScriptIndex = scriptIndex
 
         // 3. 更新显示内容
-        let script = workspaces[workspaceIndex].scripts[scriptIndex]
-        text = script.content
-        scrollOffset = script.lastScrollOffset
-
-        // 🚀 重要：立即更新渲染文本，绕过 100ms 的防抖延迟，防止页面切换时出现内容与偏移量不匹配的闪烁
-        updateAttributedText()
-
+        var script = workspaces[workspaceIndex].scripts[scriptIndex]
         isPlaying = false
         stop()
 
-        // 持久化由 text 赋值触发的 saveSubject 防抖管线自动处理，无需在此同步调用
+        let fileURL = script.resolveURL()
+        // 同步可能已更新的 URL/Bookmark 状态到内存中
+        if script.bookmarkData != workspaces[workspaceIndex].scripts[scriptIndex].bookmarkData ||
+            script.url != workspaces[workspaceIndex].scripts[scriptIndex].url {
+            workspaces[workspaceIndex].scripts[scriptIndex] = script
+        }
+
+        if script.content.isEmpty, let targetURL = fileURL {
+            let targetScriptID = script.id
+            Task {
+                let loadedContent: String
+                do {
+                    let access = targetURL.startAccessingSecurityScopedResource()
+                    defer { if access { targetURL.stopAccessingSecurityScopedResource() } }
+                    loadedContent = try String(contentsOf: targetURL, encoding: .utf8)
+                } catch {
+                    print("❌ 从磁盘读取剧本失败: \(error.localizedDescription)")
+                    loadedContent = ""
+                }
+
+                await MainActor.run {
+                    // 竞态保护：确保异步加载完成时，当前激活的剧本仍然是这同一个
+                    guard self.activeWorkspaceIndex == workspaceIndex,
+                          self.activeScriptIndex == scriptIndex,
+                          self.workspaces[workspaceIndex].scripts[scriptIndex].id == targetScriptID else {
+                        return
+                    }
+                    self.workspaces[workspaceIndex].scripts[scriptIndex].content = loadedContent
+                    self.suppressNextTextUpdate = true
+                    self.text = loadedContent
+                    self.scrollOffset = script.lastScrollOffset
+                    self.updateAttributedText()
+
+                    if !self.isInternalLoading && !self.isEditing {
+                        self.saveSubject.send()
+                    }
+                }
+            }
+        } else {
+            // 内容已在内存中，直接同步渲染
+            suppressNextTextUpdate = true
+            text = script.content
+            scrollOffset = script.lastScrollOffset
+
+            // 🚀 重要：立即更新渲染文本，绕过 100ms 的防抖延迟，防止页面切换时出现内容与偏移量不匹配的闪烁
+            updateAttributedText()
+            if !isInternalLoading && !isEditing {
+                saveSubject.send()
+            }
+        }
     }
 
     func nextScript() {
@@ -2171,12 +2462,16 @@ final class SparklePromptViewModel: ObservableObject {
 
     func fetchModels() {
         guard !aiBaseURL.isEmpty else {
-            apiTestStatus = "Base URL 不能为空"
+            let status = ProviderStatus.customError(message: "Base URL 不能为空")
+            self.providerStatuses[aiProvider] = status
+            self.apiTestStatus = status.displayText
             return
         }
 
         isTestingAPI = true
-        apiTestStatus = "正在测试连接..."
+        let status = ProviderStatus.testing
+        self.providerStatuses[aiProvider] = status
+        self.apiTestStatus = status.displayText
 
         Task {
             do {
@@ -2185,14 +2480,21 @@ final class SparklePromptViewModel: ObservableObject {
                 if !models.contains(self.aiModel) && !models.isEmpty {
                     self.aiModel = models.first!
                 }
-                let status = "测试成功，获取到 \(models.count) 个模型"
-                self.apiTestStatus = status
-                self.providerTestStatus[aiProvider] = status
+                let status = ProviderStatus.success(modelCount: models.count)
+                self.providerStatuses[aiProvider] = status
+                self.apiTestStatus = status.displayText
                 self.isTestingAPI = false
-            } catch {
-                let status = "测试失败: \(error.localizedDescription)"
-                self.apiTestStatus = status
-                self.providerTestStatus[aiProvider] = status
+            } catch let error as NSError {
+                let status: ProviderStatus
+                if error.domain == "APIError" {
+                    status = .configError(code: error.code, message: error.localizedDescription)
+                } else if error.domain == NSURLErrorDomain || error.code == -1001 || error.code == -1005 || error.code == NSURLErrorCannotConnectToHost {
+                    status = .networkError(message: error.localizedDescription)
+                } else {
+                    status = .customError(message: "测试失败: \(error.localizedDescription)")
+                }
+                self.providerStatuses[aiProvider] = status
+                self.apiTestStatus = status.displayText
                 self.isTestingAPI = false
             }
         }
@@ -2218,7 +2520,15 @@ final class SparklePromptViewModel: ObservableObject {
                 let workspaceScripts = workspaces[activeWorkspaceIndex].scripts
                     .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 
-                let allText = workspaceScripts.map { "标题：\($0.title)\n内容：\($0.content)" }.joined(separator: "\n\n---\n\n")
+                let allText = workspaceScripts.map { script -> String in
+                    var content = script.content
+                    if content.isEmpty, let targetURL = script.url {
+                        let access = targetURL.startAccessingSecurityScopedResource()
+                        defer { if access { targetURL.stopAccessingSecurityScopedResource() } }
+                        content = (try? String(contentsOf: targetURL, encoding: .utf8)) ?? ""
+                    }
+                    return "标题：\(script.title)\n内容：\(content)"
+                }.joined(separator: "\n\n---\n\n")
                 let fullContext = "当前工作区【\(workspaces[activeWorkspaceIndex].name)】包含以下资料：\n\(allText)"
 
                 // 安全限制：估算 token 数并截断。混合中英文场景下约 1.5~2 字符/token，
@@ -2279,11 +2589,13 @@ final class SparklePromptViewModel: ObservableObject {
             if enableFailover {
                 for provider in providerPriority {
                     if provider != aiProvider {
-                        if let pKey = providerKeys[provider],
-                           !pKey.isEmpty,
-                           let pURL = providerURLs[provider],
-                           let pModel = providerSelectedModels[provider],
-                           !pModel.isEmpty {
+                        let isLocal = provider.isLocal
+                        let pKey = providerKeys[provider] ?? (isLocal ? "not-needed" : "")
+                        let pURL = providerURLs[provider] ?? provider.defaultBaseURL
+                        let pModel = providerSelectedModels[provider] ?? ""
+
+                        let hasValidKey = isLocal || !pKey.isEmpty
+                        if hasValidKey && !pModel.isEmpty && !pURL.isEmpty {
                             failoverProviders.append((provider, pKey, pURL, pModel))
                         }
                     }

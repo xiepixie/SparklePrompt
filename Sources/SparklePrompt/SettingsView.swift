@@ -10,7 +10,7 @@ struct SettingsOverlay: View {
         ZStack {
             // Scrim: Respect presentationStyle for premium opacity and stealthiness
             viewModel.presentationStyle.backgroundColor
-                .opacity(max(0.7, viewModel.bgOpacity * viewModel.presentationStyle.panelOpacityMultiplier))
+                .opacity(max(0.7, viewModel.bgOpacity * (viewModel.isPrivacyMode ? 1.0 : viewModel.presentationStyle.panelOpacityMultiplier)))
                 .ignoresSafeArea()
                 .onTapGesture { viewModel.showSettings = false }
 
@@ -360,9 +360,9 @@ private struct ProviderCard: View {
                             }
                         }
 
-                        Text(viewModel.getProviderStatus(provider))
+                        Text(viewModel.getProviderStatus(provider).displayText)
                             .font(.system(size: 11))
-                            .foregroundColor(viewModel.getProviderStatusColor(provider).opacity(viewModel.presentationStyle.textOpacityMultiplier))
+                            .foregroundColor(viewModel.getProviderStatus(provider).color.opacity(viewModel.presentationStyle.textOpacityMultiplier))
                     }
 
                     Spacer()
@@ -411,7 +411,7 @@ private struct ProviderCard: View {
                             .font(.system(size: 12))
                             .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.8))
                             .frame(width: 80, alignment: .leading)
-                        SecureField(keyBinding.wrappedValue.isEmpty ? "输入 API Key (本地协议可留空)" : "Keychain 中已加密存储", text: keyBinding)
+                        SecureField(provider.isLocal ? "本地服务无需 API Key" : (keyBinding.wrappedValue.isEmpty ? "输入 API Key" : "Keychain 中已加密存储"), text: keyBinding)
                             .textFieldStyle(.plain)
                             .multilineTextAlignment(.leading)
                             .font(.system(size: 12, design: .monospaced))
@@ -433,7 +433,7 @@ private struct ProviderCard: View {
                         )
                     }
 
-                    if provider == .deepseek || provider == .openAICompatible {
+                    if provider == .deepseek || provider == .openAICompatible1 || provider == .openAICompatible2 {
                         HStack(alignment: .center, spacing: 12) {
                             Label("深度思考", systemImage: "brain")
                                 .font(.system(size: 12))
@@ -473,7 +473,7 @@ private struct ProviderCard: View {
                         if let status = viewModel.apiTestStatus, isSelected {
                             Text(status)
                                 .font(.system(size: 11))
-                                .foregroundColor(status.contains("成功") ? .green.opacity(viewModel.presentationStyle.textOpacityMultiplier) : .orange.opacity(viewModel.presentationStyle.textOpacityMultiplier))
+                                .foregroundColor(viewModel.activeStatusColor.opacity(viewModel.presentationStyle.textOpacityMultiplier))
                         }
                     }
                 }

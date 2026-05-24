@@ -1019,6 +1019,8 @@ private struct LibrarySidebar: View {
                 .foregroundStyle(viewModel.presentationStyle.secondaryTextColor.opacity(0.6))
             }
         }
+        .opacity(viewModel.presentationStyle.panelOpacityMultiplier)
+        .blur(radius: viewModel.presentationStyle.blurRadius)
         .frame(width: SparklePromptViewModel.sidebarWidth)
         .background {
             viewModel.presentationStyle.backgroundColor
@@ -1030,8 +1032,6 @@ private struct LibrarySidebar: View {
                 .frame(width: 1)
                 .background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
         }
-        .opacity(viewModel.presentationStyle.panelOpacityMultiplier)
-        .blur(radius: viewModel.presentationStyle.blurRadius)
     }
 }
 
@@ -1066,7 +1066,7 @@ private struct ScriptRow: View {
                         .font(.system(size: 13, weight: isSelected ? .bold : .medium))
                         .foregroundColor(isSelected ? style.secondaryTextColor : style.secondaryTextColor.opacity(0.8))
                         .lineLimit(1)
-                    Text("\(script.content.count) 字")
+                    Text("\(script.content.utf16.count) 字")
                         .font(.system(size: 10))
                         .foregroundColor(style.secondaryTextColor.opacity(0.4))
                 }

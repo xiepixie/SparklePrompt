@@ -26,7 +26,7 @@ actor AIService {
         var request: URLRequest
 
         switch provider {
-        case .deepseek, .openAICompatible, .mstyOllama, .mstyMLX:
+        case .deepseek, .openAICompatible1, .openAICompatible2, .mstyOllama, .mstyMLX:
             endpoint = buildEndpoint(baseURL: baseURL, suffix: "/models")
             guard let url = URL(string: endpoint) else { throw URLError(.badURL) }
             request = URLRequest(url: url)
@@ -157,7 +157,7 @@ actor AIService {
                 if base.hasSuffix("/") { base.removeLast() }
                 urlString = base + "/messages"
             }
-        default: // deepseek, openAICompatible, mstyOllama, mstyMLX
+        default: // deepseek, openAICompatible1, openAICompatible2, mstyOllama, mstyMLX
             // For now, always use chat/completions for OpenAI-compatible providers
             // The Responses API might not be available on all endpoints
             urlString = buildEndpoint(baseURL: baseURL, suffix: "/chat/completions")
@@ -226,7 +226,7 @@ actor AIService {
             ]
 
             // GPT 5.5 特定配置（根据官方配置）
-            if provider == .openAICompatible && lowerModel.contains("gpt-5") {
+            if (provider == .openAICompatible1 || provider == .openAICompatible2) && lowerModel.contains("gpt-5") {
                 body["store"] = false
                 if enableThinking {
                     // 使用官方配置的variants
@@ -262,8 +262,8 @@ actor AIService {
 
                 if let http = response as? HTTPURLResponse {
                     if http.statusCode != 200 {
-                        await onError("API 返回错误: HTTP \(http.statusCode)")
-                        return
+                        let errorMsg = parseErrorMessage(statusCode: http.statusCode)
+                        throw NSError(domain: "APIError", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "API 返回错误 (HTTP \(http.statusCode)): \(errorMsg)"])
                     }
                 }
 
@@ -346,8 +346,16 @@ actor AIService {
                 if !Task.isCancelled {
                     let nsError = error as NSError
 
-                    // Retry logic for network errors
-                    if retryCount < maxRetries && (nsError.domain == NSURLErrorDomain || nsError.code == -1001 || nsError.code == -1005) {
+                    // Check if it is a transient error that warrants retry (network timeout, host unreachable, or rate limits/gateway errors like 429, 500, 502, 503, 504)
+                    let isTransient: Bool
+                    if nsError.domain == "APIError" {
+                        let code = nsError.code
+                        isTransient = (code == 429 || code == 500 || code == 502 || code == 503 || code == 504)
+                    } else {
+                        isTransient = true
+                    }
+
+                    if isTransient && retryCount < maxRetries {
                         try? await Task.sleep(nanoseconds: UInt64(1_000_000_000 * (retryCount + 1))) // Exponential backoff
 
                         attemptStream(
@@ -388,7 +396,7 @@ actor AIService {
                             onError: onError
                         )
                     } else {
-                        await onError("网络错误: \(error.localizedDescription)")
+                        await onError(nsError.localizedDescription)
                     }
                 }
             }
