@@ -38,6 +38,13 @@ final class KeyHandlingView: NSView {
     private static var lastDispatchGate: DispatchGate?
     private static let shortcutDebounceInterval: TimeInterval = 0.1
 
+    private func isEventInSidebar(_ event: NSEvent) -> Bool {
+        guard let window else { return false }
+        let width = window.contentView?.bounds.width ?? window.frame.width
+        let sidebarStartX = max(0, width - SparklePromptViewModel.sidebarWidth)
+        return event.locationInWindow.x >= sidebarStartX
+    }
+
     func setupMonitors(_ active: Bool) {
         // 强制清理旧监听器，防止捕获失效
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
@@ -75,6 +82,7 @@ final class KeyHandlingView: NSView {
     private func installMonitor() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self, let vm = self.viewModel else { return event }
+            Self.keepCursorVisibleDuringKeyInput()
 
             // 1. 拦截 ESC (keyCode 53)
             if event.keyCode == 53 {
@@ -193,6 +201,13 @@ final class KeyHandlingView: NSView {
         }
     }
 
+    private static func keepCursorVisibleDuringKeyInput() {
+        NSCursor.setHiddenUntilMouseMoves(false)
+        DispatchQueue.main.async {
+            NSCursor.setHiddenUntilMouseMoves(false)
+        }
+    }
+
     private static func shouldDispatch(_ event: NSEvent, isContinuous: Bool) -> Bool {
         let signature = KeySignature(
             keyCode: event.keyCode,
@@ -227,10 +242,8 @@ final class KeyHandlingView: NSView {
             guard let self = self, let vm = self.viewModel else { return event }
             if vm.isEditing || vm.showSettings { return event }
 
-            if vm.showLibrary {
-                if event.locationInWindow.x < SparklePromptViewModel.sidebarWidth {
-                    return event
-                }
+            if vm.showLibrary && self.isEventInSidebar(event) {
+                return event
             }
 
             if event.momentumPhase != [] && event.momentumPhase != .began {

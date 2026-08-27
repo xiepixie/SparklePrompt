@@ -143,6 +143,26 @@ struct Script: Identifiable, Equatable, Hashable, Codable {
         )
     }
 
+    /// Create a lightweight Script reference without loading file contents.
+    static func metadataFromFile(_ url: URL) -> Script? {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else {
+            return nil
+        }
+        let modDate = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        return Script(
+            title: url.deletingPathExtension().lastPathComponent,
+            content: "",
+            url: url,
+            lastModifiedDate: modDate
+        )
+    }
+
     static func == (lhs: Script, rhs: Script) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+    func matchesLibrarySearch(_ query: String) -> Bool {
+        title.localizedCaseInsensitiveContains(query) ||
+            content.localizedCaseInsensitiveContains(query)
+    }
 }

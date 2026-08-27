@@ -1,147 +1,6 @@
 import SwiftUI
 import AppKit
 import Combine
-import UniformTypeIdentifiers
-
-struct PromptPresentationStyle {
-    let backgroundColor: Color
-    let primaryTextColor: Color
-    let secondaryTextColor: Color
-    let codeTextColor: Color
-    let accentColor: Color
-    let textOpacityMultiplier: Double
-    let panelOpacityMultiplier: Double
-    let hintOpacity: Double
-    let dividerOpacity: Double
-    let subtleFillOpacity: Double
-    let panelBorderOpacity: Double
-    let shadowOpacity: Double
-    let shadowRadius: CGFloat
-    let shadowYOffset: CGFloat
-    let blurRadius: CGFloat
-    let fontSize: CGFloat
-}
-
-/// Represents a keyboard shortcut with modifiers and a key.
-struct Shortcut: Codable, Equatable {
-    var key: String
-    var keyCode: UInt16
-    var modifiers: UInt
-
-    var normalizedModifiers: NSEvent.ModifierFlags {
-        NSEvent.ModifierFlags(rawValue: modifiers).intersection([.command, .option, .shift, .control])
-    }
-
-    var displayString: String {
-        let displayKey = key == " " ? "Space" : key.uppercased()
-        return keySymbols.joined() + displayKey
-    }
-
-    var keySymbols: [String] {
-        var symbols: [String] = []
-        let flags = normalizedModifiers
-        if flags.contains(.control) { symbols.append("⌃") }
-        if flags.contains(.option) { symbols.append("⌥") }
-        if flags.contains(.shift) { symbols.append("⇧") }
-        if flags.contains(.command) { symbols.append("⌘") }
-        return symbols
-    }
-}
-
-struct AIRole: Codable, Identifiable, Equatable {
-    var id = UUID()
-    var name: String
-    var prompt: String
-}
-
-enum AIProvider: String, Codable, CaseIterable {
-    case deepseek = "DeepSeek"
-    case openAICompatible1 = "OpenAI 兼容 1"
-    case openAICompatible2 = "OpenAI 兼容 2"
-    case anthropic = "Anthropic"
-    case ollama = "Ollama 原生"
-    case mstyOllama = "Msty Ollama"
-    case mstyMLX = "Msty MLX"
-
-    var defaultBaseURL: String {
-        switch self {
-        case .deepseek: return "https://api.deepseek.com"
-        case .openAICompatible1, .openAICompatible2: return "https://api.openai.com"
-        case .anthropic: return "https://api.anthropic.com"
-        case .ollama: return "http://localhost:11434"
-        case .mstyOllama: return "http://localhost:11964/v1"
-        case .mstyMLX: return "http://localhost:11973/v1"
-        }
-    }
-
-    var isLocal: Bool {
-        switch self {
-        case .ollama, .mstyOllama, .mstyMLX:
-            return true
-        default:
-            return false
-        }
-    }
-}
-
-enum ProviderStatus: Equatable {
-    case notConfigured
-    case localReady
-    case waitingForTest
-    case testing
-    case success(modelCount: Int)
-    case configError(code: Int, message: String)
-    case networkError(message: String)
-    case customError(message: String)
-
-    var displayText: String {
-        switch self {
-        case .notConfigured: return "未配置 API Key"
-        case .localReady: return "本地服务就绪"
-        case .waitingForTest: return "等待测试连接"
-        case .testing: return "正在验证连接..."
-        case .success(let count): return "测试成功，可使用 \(count) 个模型"
-        case .configError(let code, let msg): return "配置错误 (HTTP \(code)): \(msg)"
-        case .networkError(let msg): return "网络错误: \(msg)"
-        case .customError(let msg): return msg
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .localReady, .success: return .green
-        case .configError, .networkError, .notConfigured: return .red
-        case .waitingForTest, .testing, .customError: return .yellow
-        }
-    }
-}
-
-
-enum ShortcutAction: String, CaseIterable, Codable {
-    case playPause = "播放/暂停"
-    case reset = "重置"
-    case toggleLibrary = "剧本库"
-    case prevScript = "上一个剧本"
-    case nextScript = "下一个剧本"
-    case aiPrompt = "AI 面板"
-    case toggleControls = "控制栏"
-    case toggleAlwaysOnTop = "置顶"
-    case paste = "粘贴"
-    case toggleTimer = "计时器开关"
-    case resetTimer = "计时器重置"
-    case toggleEdit = "编辑剧本"
-    case prevWorkspace = "上一个工作区"
-    case nextWorkspace = "下一个工作区"
-    case increaseFontSize = "增大字号"
-    case decreaseFontSize = "减小字号"
-    case increaseBgOpacity = "增加背景暗度"
-    case decreaseBgOpacity = "减小背景暗度"
-    case increaseTextOpacity = "增加文字不透明度"
-    case decreaseTextOpacity = "减小文字不透明度"
-    case togglePrivacy = "隐私防护"
-    case toggleMirrorH = "水平镜像"
-    case toggleMirrorV = "垂直镜像"
-}
 
 @MainActor
 final class SparklePromptViewModel: ObservableObject {
@@ -162,6 +21,39 @@ final class SparklePromptViewModel: ObservableObject {
         let dir = aiScriptsDirectory.appendingPathComponent(workspaceId.uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    nonisolated private static func readFullText(from url: URL) -> String {
+        do {
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            return try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            return ""
+        }
+    }
+
+    nonisolated private static func fullWorkspaceContext(workspaceName: String, scripts: [Script]) -> String {
+        var chunks: [String] = []
+
+        for script in scripts {
+            if Task.isCancelled { break }
+
+            let content: String
+            if !script.content.isEmpty {
+                content = script.content
+            } else if let url = script.url {
+                content = readFullText(from: url)
+            } else {
+                content = ""
+            }
+
+            chunks.append("标题：\(script.title)\n内容：\(content)")
+        }
+
+        var context = "当前工作区【\(workspaceName)】包含以下资料：\n"
+        context += chunks.joined(separator: "\n\n---\n\n")
+        return context
     }
 
     // MARK: - Core playback state
@@ -240,6 +132,7 @@ final class SparklePromptViewModel: ObservableObject {
     @Published var textOpacity: Double = 1.0 { didSet { if !isInternalLoading { saveSubject.send() } } }
     @Published var bgOpacity: Double = 0.65 { didSet { if !isInternalLoading { saveSubject.send() } } }
     @Published var privacyBlurRadius: CGFloat = 1.0 { didSet { if !isInternalLoading { saveSubject.send() } } }
+    @Published var privacyChangeStyle: Bool = true { didSet { if !isInternalLoading { saveSubject.send() } } } // 隐私模式是否改变样式
     @Published var mirroredHorizontal: Bool = false
     @Published var mirroredVertical: Bool = false
     @Published var showControls: Bool = true
@@ -255,6 +148,7 @@ final class SparklePromptViewModel: ObservableObject {
             } else {
                 // 退出编辑：一次性刷新格式化文本并触发保存
                 updateAttributedText()
+                markLibraryDirty(rebuild: true)
                 saveSubject.send()
             }
             updateWindowInteractionState()
@@ -325,7 +219,7 @@ final class SparklePromptViewModel: ObservableObject {
     }
 
     var presentationStyle: PromptPresentationStyle {
-        if isPrivacyMode {
+        if isPrivacyMode && privacyChangeStyle {
             return PromptPresentationStyle(
                 backgroundColor: Color(red: 30/255, green: 30/255, blue: 30/255),
                 primaryTextColor: Color(red: 65/255, green: 65/255, blue: 65/255),
@@ -380,14 +274,18 @@ final class SparklePromptViewModel: ObservableObject {
     private var ghostRunTimer: Timer?
 
     func requestGhostMode() {
-        guard !mousePenetration else { return }
+        guard !mousePenetration && !isGhostModePending else { return }
         showSettings = false
-        showAIPromptBar = true
+        isEditing = false
+        showLibrary = false
+        showAIPromptBar = false
+        showControls = true
 
         // 切换显示模式为准备期
         timerDisplayMode = .ghostPrep
         isGhostModePending = true
         ghostModeCountdown = 3
+        updateWindowInteractionState()
 
         ghostPrepTimer?.invalidate()
         ghostPrepTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -404,29 +302,32 @@ final class SparklePromptViewModel: ObservableObject {
 
     func cancelGhostPrep() {
         isGhostModePending = false
+        ghostModeCountdown = 0
+        timerDisplayMode = .speech
         ghostPrepTimer?.invalidate()
         ghostPrepTimer = nil
+        updateWindowInteractionState()
     }
 
     private func startGhostSession() {
         cancelGhostPrep()
 
+        // 🧹 清理交互浮层，确保穿透锁定不会被设置、编辑或 AI 面板阻断。
+        showSettings = false
+        isEditing = false
+        showLibrary = false
+        showAIPromptBar = false
+
         // 🔒 核心安全锁定：开启穿透、隐私与置顶
         mousePenetration = true
         isPrivacyMode = true
         alwaysOnTop = true
-
-        // 🧹 清理 UI：关闭设置和剧本库，但保留底部栏（因为计时器在那里）
-        showSettings = false
-        isEditing = false
-        showLibrary = false
         showControls = true
-        showAIPromptBar = true
-
         ghostModeTimeRemaining = Int(ghostModeDuration)
 
         // 切换显示模式为运行期
         timerDisplayMode = .ghostRun
+        updateWindowInteractionState()
 
         // 确保进入即开始播放
         if !isPlaying {
@@ -472,8 +373,22 @@ final class SparklePromptViewModel: ObservableObject {
 
     // MARK: - Script Library (Workspace Architecture)
     @Published var workspaces: [Workspace] = [Workspace(name: "收集箱", scripts: [])]
-    @Published var activeWorkspaceIndex: Int = 0
-    @Published var activeScriptIndex: Int = -1
+    @Published var activeWorkspaceIndex: Int = 0 {
+        didSet {
+            if oldValue != activeWorkspaceIndex {
+                rebuildLibraryPresentation()
+            }
+        }
+    }
+    @Published var activeScriptIndex: Int = -1 {
+        didSet {
+            if oldValue != activeScriptIndex {
+                rebuildLibraryPresentation()
+            }
+        }
+    }
+    @Published private(set) var librarySections: [LibraryWorkspaceSection] = []
+    @Published private(set) var libraryMoveTargets: [LibraryMoveTarget] = []
 
     // MARK: - UI Display Helpers
 
@@ -509,6 +424,9 @@ final class SparklePromptViewModel: ObservableObject {
         didSet {
             if oldValue != showLibrary {
                 windowController?.toggleSidebar(show: showLibrary)
+                if showLibrary {
+                    rebuildLibraryPresentation()
+                }
             }
         }
     }
@@ -522,6 +440,15 @@ final class SparklePromptViewModel: ObservableObject {
     @Published var debouncedSearchQuery: String = ""
     private let searchSubject = PassthroughSubject<String, Never>()
     @Published var attributedText: AttributedString = AttributedString("")
+
+    var isLibraryEmpty: Bool {
+        workspaces.allSatisfy { $0.scripts.isEmpty }
+    }
+
+    var activeScriptCount: Int {
+        guard activeWorkspaceIndex >= 0 && activeWorkspaceIndex < workspaces.count else { return 0 }
+        return workspaces[activeWorkspaceIndex].scripts.count
+    }
 
     // MARK: - AI Configuration (persisted via settings window)
 
@@ -610,6 +537,7 @@ final class SparklePromptViewModel: ObservableObject {
 
     // MARK: - AI Runtime state
     @Published var isAIStreaming: Bool = false
+    @Published var isPreparingAIContext: Bool = false
     @Published var showAIPromptBar: Bool = false {
         didSet {
             if showAIPromptBar {
@@ -638,9 +566,13 @@ final class SparklePromptViewModel: ObservableObject {
 
     private var displayLink: DisplayLink?
     private var lastFrameTime: Double = 0
+    private var aiRequestTask: Task<Void, Never>?
+    private var aiContextPreparationTask: Task<String, Never>?
+    private var activeAIRequestID: UUID?
     private var saveSubject = PassthroughSubject<Void, Never>()
     private var cancellables = Set<AnyCancellable>()
     private var isResetting = false
+    private var isLibraryDirty = false
     private let textUpdateSubject = PassthroughSubject<Void, Never>()
 
     @Published var showSaveStatus: Bool = false
@@ -680,7 +612,9 @@ final class SparklePromptViewModel: ObservableObject {
                     self.saveAISettingsToDefaults()
                 }
                 self.saveShortcuts()
-                self.saveLibrary()
+                if self.isLibraryDirty {
+                    self.saveLibrary()
+                }
                 // notifySaveSuccess() // 移除自动保存的弹窗提示，改为静默保存
             }
             .store(in: &cancellables)
@@ -695,10 +629,14 @@ final class SparklePromptViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Debounce search (300ms)
+        // Debounce search (300ms) and precompute library presentation off the SwiftUI body path.
         searchSubject
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
-            .assign(to: \.debouncedSearchQuery, on: self)
+            .sink { [weak self] query in
+                guard let self = self else { return }
+                self.debouncedSearchQuery = query
+                self.rebuildLibraryPresentation()
+            }
             .store(in: &cancellables)
 
         // Throttle Attributed Text Update (100ms) - 确保流式输出时至少每 100ms 渲染一次
@@ -714,12 +652,14 @@ final class SparklePromptViewModel: ObservableObject {
                 self.updateAttributedText()
                 // 编辑模式下不触发自动保存，退出编辑时统一保存
                 if !self.isInternalLoading && !self.isEditing {
+                    self.markLibraryDirty(rebuild: false)
                     self.saveSubject.send()
                 }
             }
             .store(in: &cancellables)
 
         updateAttributedText()
+        rebuildLibraryPresentation()
     }
 
     deinit {
@@ -977,6 +917,81 @@ final class SparklePromptViewModel: ObservableObject {
         showSaveStatus = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.showSaveStatus = false
+        }
+    }
+
+    func toggleWorkspaceExpansion(at index: Int) {
+        guard index >= 0 && index < workspaces.count else { return }
+        workspaces[index].isExpanded.toggle()
+        markLibraryDirty(rebuild: true)
+        if !isInternalLoading { saveSubject.send() }
+    }
+
+    func clearLibrarySearch() {
+        scriptSearchQuery = ""
+        debouncedSearchQuery = ""
+        rebuildLibraryPresentation()
+    }
+
+    private func markLibraryDirty(rebuild: Bool) {
+        isLibraryDirty = true
+        if rebuild {
+            rebuildLibraryPresentation()
+        }
+    }
+
+    private func rebuildLibraryPresentation() {
+        let query = debouncedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isSearching = !query.isEmpty
+
+        libraryMoveTargets = workspaces.enumerated().map { index, workspace in
+            LibraryMoveTarget(
+                id: workspace.id,
+                index: index,
+                name: workspace.name,
+                usesFolderIcon: workspace.folderURL != nil || workspace.folderBookmark != nil
+            )
+        }
+
+        librarySections = workspaces.enumerated().compactMap { workspaceIndex, workspace in
+            let workspaceMatches = isSearching && workspace.name.localizedCaseInsensitiveContains(query)
+            let showsScripts = workspace.isExpanded || isSearching
+            let rowData: [LibraryScriptRowData]
+
+            if showsScripts {
+                rowData = workspace.scripts.enumerated().compactMap { scriptIndex, script in
+                    if isSearching && !script.matchesLibrarySearch(query) {
+                        return nil
+                    }
+                    return LibraryScriptRowData(
+                        id: script.id,
+                        originalIndex: scriptIndex,
+                        title: script.title,
+                        contentCharacterCount: script.content.utf16.count,
+                        isAIGenerated: script.isAIGenerated,
+                        isSelected: workspaceIndex == activeWorkspaceIndex && scriptIndex == activeScriptIndex
+                    )
+                }
+            } else {
+                rowData = []
+            }
+
+            if isSearching && !workspaceMatches && rowData.isEmpty {
+                return nil
+            }
+
+            return LibraryWorkspaceSection(
+                id: workspace.id,
+                index: workspaceIndex,
+                name: workspace.name,
+                isExpanded: workspace.isExpanded,
+                isFolderMissing: workspace.isFolderMissing,
+                hasFolderURL: workspace.folderURL != nil || workspace.folderBookmark != nil,
+                isActive: workspaceIndex == activeWorkspaceIndex,
+                showsScripts: showsScripts,
+                isEmpty: workspace.scripts.isEmpty,
+                scripts: rowData
+            )
         }
     }
 
@@ -1526,49 +1541,7 @@ final class SparklePromptViewModel: ObservableObject {
             saveLibrary()
         }
 
-        // 启动后台异步加载管线，预先缓存本地磁盘上的脚本内容，避免同步读取卡顿
-        lazyLoadAllScriptsContent()
-    }
-
-    private func lazyLoadAllScriptsContent() {
-        Task.detached(priority: .utility) { [weak self] in
-            guard let self = self else { return }
-            let currentWorkspaces = await MainActor.run { self.workspaces }
-
-            for wIndex in 0..<currentWorkspaces.count {
-                for sIndex in 0..<currentWorkspaces[wIndex].scripts.count {
-                    var script = currentWorkspaces[wIndex].scripts[sIndex]
-                    if script.content.isEmpty, let targetURL = script.resolveURL() {
-                        let targetScriptID = script.id
-                        let scriptTitle = script.title
-                        do {
-                            let access = targetURL.startAccessingSecurityScopedResource()
-                            defer { if access { targetURL.stopAccessingSecurityScopedResource() } }
-                            let loadedContent = try String(contentsOf: targetURL, encoding: .utf8)
-
-                            await MainActor.run {
-                                // 校验确保在加载期间内存中的内容未被用户修改或替换过
-                                if wIndex < self.workspaces.count &&
-                                   sIndex < self.workspaces[wIndex].scripts.count &&
-                                   self.workspaces[wIndex].scripts[sIndex].id == targetScriptID &&
-                                   self.workspaces[wIndex].scripts[sIndex].content.isEmpty {
-                                    self.workspaces[wIndex].scripts[sIndex].content = loadedContent
-
-                                    // 如果该剧本刚好当前激活，同步更新 text 及渲染视图
-                                    if wIndex == self.activeWorkspaceIndex && sIndex == self.activeScriptIndex {
-                                        self.suppressNextTextUpdate = true
-                                        self.text = loadedContent
-                                        self.updateAttributedText()
-                                    }
-                                }
-                            }
-                        } catch {
-                            print("⚠️ 后台加载剧本失败 [\(scriptTitle)]: \(error.localizedDescription)")
-                        }
-                    }
-                }
-            }
-        }
+        rebuildLibraryPresentation()
     }
 
     func saveLibrary() {
@@ -1594,6 +1567,7 @@ final class SparklePromptViewModel: ObservableObject {
 
         if let encoded = try? JSONEncoder().encode(workspacesToSave) {
             UserDefaults.standard.set(encoded, forKey: workspacesKey)
+            isLibraryDirty = false
         }
     }
 
@@ -1885,7 +1859,7 @@ final class SparklePromptViewModel: ObservableObject {
                     for case let fileURL as URL in enumerator {
                         let ext = fileURL.pathExtension.lowercased()
                         if ["txt", "md", "text"].contains(ext) {
-                            if let script = Script.fromFile(fileURL) {
+                            if let script = Script.metadataFromFile(fileURL) {
                                 newScripts.append(script)
                             }
                         }
@@ -1918,7 +1892,10 @@ final class SparklePromptViewModel: ObservableObject {
             }
         }
 
-        if changed { saveLibrary() }
+        if changed {
+            rebuildLibraryPresentation()
+            saveLibrary()
+        }
     }
 
     // MARK: - Workspace Refresh
@@ -2016,7 +1993,7 @@ final class SparklePromptViewModel: ObservableObject {
                     }
                 }
 
-                // 增量同步内容
+                // 增量同步元数据。正文只在已加载或当前选中时读取，避免大库刷新扫全文。
                 let needsUpdate: Bool
                 if let diskDate = diskModDate, let cachedDate = updatedScripts[i].lastModifiedDate {
                     needsUpdate = diskDate > cachedDate
@@ -2025,13 +2002,15 @@ final class SparklePromptViewModel: ObservableObject {
                 }
 
                 if needsUpdate {
-                    if let newContent = try? String(contentsOf: fileURL, encoding: .utf8), newContent != updatedScripts[i].content {
+                    let shouldRefreshContent = !updatedScripts[i].content.isEmpty ||
+                        (targetIndex == activeWorkspaceIndex && i == activeScriptIndex)
+                    if shouldRefreshContent,
+                       let newContent = try? String(contentsOf: fileURL, encoding: .utf8),
+                       newContent != updatedScripts[i].content {
                         updatedScripts[i].content = newContent
-                        updatedScripts[i].lastModifiedDate = diskModDate
                         changed = true
-                    } else {
-                        updatedScripts[i].lastModifiedDate = diskModDate
                     }
+                    updatedScripts[i].lastModifiedDate = diskModDate
                 }
 
                 // 确保运行时 URL 是最新的（防止磁盘重命名后路径变化）
@@ -2041,7 +2020,7 @@ final class SparklePromptViewModel: ObservableObject {
                 }
             } else {
                 // ✨ 这是一个真正的新文件
-                if let newScript = Script.fromFile(fileURL) {
+                if let newScript = Script.metadataFromFile(fileURL) {
                     newDiskScripts.append(newScript)
                     changed = true
                 }
@@ -2072,6 +2051,7 @@ final class SparklePromptViewModel: ObservableObject {
             }
 
             self.workspaces[currentIndex].scripts = finalScripts
+            self.rebuildLibraryPresentation()
 
             // 恢复选中状态
             if let currentId = currentActiveId, currentIndex == self.activeWorkspaceIndex {
@@ -2085,6 +2065,7 @@ final class SparklePromptViewModel: ObservableObject {
             }
 
             if changed { self.saveLibrary() }
+            self.rebuildLibraryPresentation()
             self.refreshingWorkspaceId = nil
         }
     }
@@ -2103,6 +2084,7 @@ final class SparklePromptViewModel: ObservableObject {
         // 2. 更新索引
         activeWorkspaceIndex = workspaceIndex
         activeScriptIndex = scriptIndex
+        rebuildLibraryPresentation()
 
         // 3. 更新显示内容
         var script = workspaces[workspaceIndex].scripts[scriptIndex]
@@ -2141,6 +2123,7 @@ final class SparklePromptViewModel: ObservableObject {
                     self.text = loadedContent
                     self.scrollOffset = script.lastScrollOffset
                     self.updateAttributedText()
+                    self.rebuildLibraryPresentation()
 
                     if !self.isInternalLoading && !self.isEditing {
                         self.saveSubject.send()
@@ -2195,6 +2178,7 @@ final class SparklePromptViewModel: ObservableObject {
             activeScriptIndex = -1
             text = SparklePromptViewModel.defaultText
             reset()
+            rebuildLibraryPresentation()
         }
     }
 
@@ -2242,6 +2226,7 @@ final class SparklePromptViewModel: ObservableObject {
             reset()
         }
 
+        rebuildLibraryPresentation()
         saveLibrary()
         notifySaveSuccess()
     }
@@ -2323,6 +2308,7 @@ final class SparklePromptViewModel: ObservableObject {
             }
         }
 
+        rebuildLibraryPresentation()
         saveLibrary()
         notifySaveSuccess()
     }
@@ -2374,6 +2360,7 @@ final class SparklePromptViewModel: ObservableObject {
                 activeScriptIndex -= 1
             }
         }
+        rebuildLibraryPresentation()
         saveLibrary()
     }
 
@@ -2409,6 +2396,7 @@ final class SparklePromptViewModel: ObservableObject {
         let aiDir = SparklePromptViewModel.aiDirectory(for: workspaceId)
         try? FileManager.default.removeItem(at: aiDir)
 
+        rebuildLibraryPresentation()
         saveLibrary()
         notifySaveSuccess()
     }
@@ -2432,7 +2420,7 @@ final class SparklePromptViewModel: ObservableObject {
                     for case let fileURL as URL in enumerator {
                         let ext = fileURL.pathExtension.lowercased()
                         if ["txt", "md", "text"].contains(ext) {
-                            if let script = Script.fromFile(fileURL) {
+                            if let script = Script.metadataFromFile(fileURL) {
                                 newScripts.append(script)
                             }
                         }
@@ -2457,6 +2445,7 @@ final class SparklePromptViewModel: ObservableObject {
         }
 
         if changed {
+            rebuildLibraryPresentation()
             saveLibrary()
         }
     }
@@ -2504,105 +2493,141 @@ final class SparklePromptViewModel: ObservableObject {
     }
 
     func submitAIPrompt() {
-        guard !aiPrompt.isEmpty && !isAIStreaming else { return }
+        guard !aiPrompt.isEmpty && !isAIStreaming && !isPreparingAIContext else { return }
 
         let prompt = aiPrompt
         let key = aiAPIKey
         let model = aiModel
         let baseURL = aiBaseURL
+        let provider = aiProvider
+        let enableThinking = enableDeepSeekThinking
+
         // 1. 拼接系统提示词（个人风格 + 角色设定），保持前缀极其稳定以压榨缓存命中率
         let personalStyleHeader = aiPersonalStyle.isEmpty ? "" : "【个人风格偏好】\n\(aiPersonalStyle)\n\n"
         let rolePrompt = aiRoles.indices.contains(selectedRoleIndex) ? aiRoles[selectedRoleIndex].prompt : ""
         let sysPrompt = "\(personalStyleHeader)\(rolePrompt)"
 
-        // 2. 构造上下文
-        var contextText: String? = nil
-        if useAnyContextForAI && text != SparklePromptViewModel.defaultText {
-            if useWorkspaceContextForAI {
-                // ✨ 确定性拼接：按标题排序，确保只要文件内容没变，拼接后的字符串物理顺序一致，从而命中前缀缓存
-                let workspaceScripts = workspaces[activeWorkspaceIndex].scripts
-                    .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        let shouldUseAnyContext = useAnyContextForAI && text != SparklePromptViewModel.defaultText
+        let shouldUseWorkspaceContext = shouldUseAnyContext && useWorkspaceContextForAI
+        let currentTextContext = text
+        let workspaceName = workspaces.indices.contains(activeWorkspaceIndex) ? workspaces[activeWorkspaceIndex].name : "当前工作区"
+        let workspaceId = workspaces.indices.contains(activeWorkspaceIndex) ? workspaces[activeWorkspaceIndex].id : UUID()
+        let workspaceScripts = shouldUseWorkspaceContext && workspaces.indices.contains(activeWorkspaceIndex)
+            ? workspaces[activeWorkspaceIndex].scripts.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            : []
 
-                let allText = workspaceScripts.map { script -> String in
-                    var content = script.content
-                    if content.isEmpty, let targetURL = script.url {
-                        let access = targetURL.startAccessingSecurityScopedResource()
-                        defer { if access { targetURL.stopAccessingSecurityScopedResource() } }
-                        content = (try? String(contentsOf: targetURL, encoding: .utf8)) ?? ""
-                    }
-                    return "标题：\(script.title)\n内容：\(content)"
-                }.joined(separator: "\n\n---\n\n")
-                let fullContext = "当前工作区【\(workspaces[activeWorkspaceIndex].name)】包含以下资料：\n\(allText)"
+        var failoverProviders: [(provider: AIProvider, apiKey: String, baseURL: String, model: String)] = []
+        if enableFailover {
+            for candidate in providerPriority where candidate != provider {
+                let isLocal = candidate.isLocal
+                let pKey = providerKeys[candidate] ?? (isLocal ? "not-needed" : "")
+                let pURL = providerURLs[candidate] ?? candidate.defaultBaseURL
+                let pModel = providerSelectedModels[candidate] ?? ""
 
-                // 安全限制：估算 token 数并截断。混合中英文场景下约 1.5~2 字符/token，
-                // 保守按 1.5 估算，限制在 8000 tokens 以内以兼容大多数模型 context window。
-                let estimatedTokens = fullContext.count * 2 / 3  // ~1.5 chars per token
-                let maxTokens = 8000
-                if estimatedTokens > maxTokens {
-                    let maxChars = maxTokens * 3 / 2  // reverse estimation
-                    contextText = String(fullContext.prefix(maxChars)) + "\n\n...(内容过长，已自动截断至约 \(maxTokens) tokens)"
-                } else {
-                    contextText = fullContext
+                let hasValidKey = isLocal || !pKey.isEmpty
+                if hasValidKey && !pModel.isEmpty && !pURL.isEmpty {
+                    failoverProviders.append((candidate, pKey, pURL, pModel))
                 }
-            } else {
-                contextText = text
             }
         }
 
         aiErrorMessage = ""
         isAIStreaming = true
+        isPreparingAIContext = shouldUseWorkspaceContext
         showAIPromptBar = false
         autoFollowEnabled = true
 
         let titlePreview = String(prompt.prefix(20))
         let scriptId = UUID()
+        let requestID = UUID()
 
-        // ✨ AI 生成的剧本存储到 App 影子目录，不污染用户文件夹
-        let aiDir = SparklePromptViewModel.aiDirectory(for: workspaces[activeWorkspaceIndex].id)
-        let safeName = titlePreview.replacingOccurrences(of: "/", with: "-")
-                                   .replacingOccurrences(of: ":", with: "-")
-                                   .replacingOccurrences(of: "\n", with: " ")
-        let aiFileURL = aiDir.appendingPathComponent("\(safeName)-\(scriptId.uuidString.prefix(8)).md")
-
-        let newScript = Script(
-            id: scriptId,
-            title: "AI: \(titlePreview)…",
-            content: "",
-            url: aiFileURL,
-            isAIGenerated: true
-        )
-
-        // Add to active workspace
-        workspaces[activeWorkspaceIndex].scripts.append(newScript)
-
-        // Clear context when creating new AI script
-        useAnyContextForAI = false
-        let targetWorkspaceIndex = activeWorkspaceIndex
-        let targetScriptIndex = workspaces[activeWorkspaceIndex].scripts.count - 1
-
-        activeScriptIndex = targetScriptIndex
-        text = ""
-        reset()
-
-        Task {
+        aiRequestTask?.cancel()
+        aiContextPreparationTask?.cancel()
+        activeAIRequestID = requestID
+        aiRequestTask = Task {
             var fullResponse = ""
+            let contextText: String?
 
-            // Build failover providers list based on priority
-            var failoverProviders: [(provider: AIProvider, apiKey: String, baseURL: String, model: String)] = []
-            if enableFailover {
-                for provider in providerPriority {
-                    if provider != aiProvider {
-                        let isLocal = provider.isLocal
-                        let pKey = providerKeys[provider] ?? (isLocal ? "not-needed" : "")
-                        let pURL = providerURLs[provider] ?? provider.defaultBaseURL
-                        let pModel = providerSelectedModels[provider] ?? ""
-
-                        let hasValidKey = isLocal || !pKey.isEmpty
-                        if hasValidKey && !pModel.isEmpty && !pURL.isEmpty {
-                            failoverProviders.append((provider, pKey, pURL, pModel))
-                        }
-                    }
+            if shouldUseWorkspaceContext {
+                let preparationTask = Task.detached(priority: .userInitiated) {
+                    Self.fullWorkspaceContext(workspaceName: workspaceName, scripts: workspaceScripts)
                 }
+                aiContextPreparationTask = preparationTask
+                contextText = await preparationTask.value
+                if activeAIRequestID == requestID {
+                    aiContextPreparationTask = nil
+                }
+            } else if shouldUseAnyContext {
+                contextText = currentTextContext
+            } else {
+                contextText = nil
+            }
+
+            guard !Task.isCancelled, activeAIRequestID == requestID else {
+                if activeAIRequestID == requestID {
+                    isAIStreaming = false
+                    isPreparingAIContext = false
+                    aiContextPreparationTask = nil
+                    aiRequestTask = nil
+                    activeAIRequestID = nil
+                }
+                return
+            }
+
+            isPreparingAIContext = false
+
+            // ✨ AI 生成的剧本存储到 App 影子目录，不污染用户文件夹
+            let aiDir = SparklePromptViewModel.aiDirectory(for: workspaceId)
+            let safeName = titlePreview.replacingOccurrences(of: "/", with: "-")
+                                       .replacingOccurrences(of: ":", with: "-")
+                                       .replacingOccurrences(of: "\n", with: " ")
+            let aiFileURL = aiDir.appendingPathComponent("\(safeName)-\(scriptId.uuidString.prefix(8)).md")
+
+            let newScript = Script(
+                id: scriptId,
+                title: "AI: \(titlePreview)…",
+                content: "",
+                url: aiFileURL,
+                isAIGenerated: true
+            )
+
+            guard let targetWorkspaceIndex = workspaces.firstIndex(where: { $0.id == workspaceId }) else {
+                if activeAIRequestID == requestID {
+                    isAIStreaming = false
+                    isPreparingAIContext = false
+                    aiRequestTask = nil
+                    activeAIRequestID = nil
+                }
+                return
+            }
+
+            workspaces[targetWorkspaceIndex].scripts.append(newScript)
+
+            let targetScriptIndex = workspaces[targetWorkspaceIndex].scripts.count - 1
+
+            activeWorkspaceIndex = targetWorkspaceIndex
+            activeScriptIndex = targetScriptIndex
+            text = ""
+            reset()
+            rebuildLibraryPresentation()
+
+            guard !Task.isCancelled, activeAIRequestID == requestID else {
+                if targetWorkspaceIndex < workspaces.count,
+                   targetScriptIndex < workspaces[targetWorkspaceIndex].scripts.count,
+                   workspaces[targetWorkspaceIndex].scripts[targetScriptIndex].id == scriptId,
+                   workspaces[targetWorkspaceIndex].scripts[targetScriptIndex].content.isEmpty {
+                    workspaces[targetWorkspaceIndex].scripts.remove(at: targetScriptIndex)
+                    rebuildLibraryPresentation()
+                }
+
+                if activeAIRequestID == requestID {
+                    isAIStreaming = false
+                    isPreparingAIContext = false
+                    aiContextPreparationTask = nil
+                    aiRequestTask = nil
+                    activeAIRequestID = nil
+                }
+                return
             }
 
             await aiService.stream(
@@ -2611,12 +2636,13 @@ final class SparklePromptViewModel: ObservableObject {
                 prompt: prompt,
                 systemPrompt: sysPrompt,
                 model: model,
-                provider: aiProvider,
-                enableThinking: enableDeepSeekThinking,
+                provider: provider,
+                enableThinking: enableThinking,
                 context: contextText,
                 failoverProviders: failoverProviders,
                 onChunk: { [weak self] chunk in
                     guard let self = self else { return }
+                    guard self.activeAIRequestID == requestID else { return }
                     fullResponse += chunk
 
                     // 如果用户还在看这个 AI 脚本，更新实时显示
@@ -2633,7 +2659,12 @@ final class SparklePromptViewModel: ObservableObject {
                 },
                 onDone: { [weak self] in
                     guard let self = self else { return }
+                    guard self.activeAIRequestID == requestID else { return }
                     self.isAIStreaming = false
+                    self.isPreparingAIContext = false
+                    self.aiContextPreparationTask = nil
+                    self.aiRequestTask = nil
+                    self.activeAIRequestID = nil
                     self.aiPrompt = ""
 
                     // ✨ 将 AI 生成的内容写入影子目录文件
@@ -2645,10 +2676,16 @@ final class SparklePromptViewModel: ObservableObject {
                     }
 
                     self.saveLibrary()
+                    self.rebuildLibraryPresentation()
                 },
                 onError: { [weak self] error in
                     guard let self = self else { return }
+                    guard self.activeAIRequestID == requestID else { return }
                     self.isAIStreaming = false
+                    self.isPreparingAIContext = false
+                    self.aiContextPreparationTask = nil
+                    self.aiRequestTask = nil
+                    self.activeAIRequestID = nil
                     self.aiErrorMessage = error
                     self.showAIPromptBar = true
                 }
@@ -2657,8 +2694,14 @@ final class SparklePromptViewModel: ObservableObject {
     }
 
     func cancelAIGeneration() {
+        aiRequestTask?.cancel()
+        aiContextPreparationTask?.cancel()
+        aiRequestTask = nil
+        aiContextPreparationTask = nil
+        activeAIRequestID = nil
         Task { await aiService.cancel() }
         isAIStreaming = false
+        isPreparingAIContext = false
     }
 
     func scrollToBottom() {
@@ -2714,6 +2757,12 @@ final class SparklePromptViewModel: ObservableObject {
         if let onTop = UserDefaults.standard.object(forKey: "Pref_alwaysOnTop") as? Bool {
             self.alwaysOnTop = onTop
         }
+        if let ghostModeDuration = UserDefaults.standard.object(forKey: "Pref_ghostModeDuration") as? Double {
+            self.ghostModeDuration = ghostModeDuration
+        }
+        if let privacyChangeStyle = UserDefaults.standard.object(forKey: "Pref_privacyChangeStyle") as? Bool {
+            self.privacyChangeStyle = privacyChangeStyle
+        }
     }
 
     func saveVisualSettings() {
@@ -2734,38 +2783,7 @@ final class SparklePromptViewModel: ObservableObject {
         }
         UserDefaults.standard.set(isPrivacyMode, forKey: "Pref_isPrivacyMode")
         UserDefaults.standard.set(alwaysOnTop, forKey: "Pref_alwaysOnTop")
-    }
-}
-
-extension NSColor {
-    convenience init?(hex: String) {
-        let hexString = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scanner = Scanner(string: hexString)
-        if hexString.hasPrefix("#") { scanner.currentIndex = scanner.string.index(after: scanner.currentIndex) }
-        var color: UInt64 = 0
-        guard scanner.scanHexInt64(&color) else { return nil }
-        let r, g, b, a: CGFloat
-        let cleanHex = hexString.hasPrefix("#") ? String(hexString.dropFirst()) : hexString
-        if cleanHex.count == 8 {
-            r = CGFloat((color & 0xff000000) >> 24) / 255
-            g = CGFloat((color & 0x00ff0000) >> 16) / 255
-            b = CGFloat((color & 0x0000ff00) >> 8) / 255
-            a = CGFloat(color & 0x000000ff) / 255
-        } else if cleanHex.count == 6 {
-            r = CGFloat((color & 0xff0000) >> 16) / 255
-            g = CGFloat((color & 0x00ff00) >> 8) / 255
-            b = CGFloat(color & 0x0000ff) / 255
-            a = 1.0
-        } else { return nil }
-        self.init(red: r, green: g, blue: b, alpha: a)
-    }
-
-    func toHex() -> String? {
-        guard let rgbColor = usingColorSpace(.sRGB) else { return nil }
-        let r = Int(round(rgbColor.redComponent * 255))
-        let g = Int(round(rgbColor.greenComponent * 255))
-        let b = Int(round(rgbColor.blueComponent * 255))
-        let a = Int(round(rgbColor.alphaComponent * 255))
-        return String(format: "#%02X%02X%02X%02X", r, g, b, a)
+        UserDefaults.standard.set(ghostModeDuration, forKey: "Pref_ghostModeDuration")
+        UserDefaults.standard.set(privacyChangeStyle, forKey: "Pref_privacyChangeStyle")
     }
 }

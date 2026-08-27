@@ -7,176 +7,199 @@ struct SettingsOverlay: View {
     @State private var selectedTab: Int = 0
 
     var body: some View {
-        ZStack {
-            // Scrim: Respect presentationStyle for premium opacity and stealthiness
-            viewModel.presentationStyle.backgroundColor
-                .opacity(max(0.7, viewModel.bgOpacity * (viewModel.isPrivacyMode ? 1.0 : viewModel.presentationStyle.panelOpacityMultiplier)))
-                .ignoresSafeArea()
-                .onTapGesture { viewModel.showSettings = false }
+        GeometryReader { proxy in
+            let metrics = SettingsOverlayMetrics(containerSize: proxy.size)
 
-            HStack(spacing: 0) {
-                // Left Sidebar Pane
-                VStack(alignment: .leading, spacing: 0) {
-                    // Header
-                    HStack(spacing: 8) {
-                        ZStack {
-                            Circle().fill(viewModel.presentationStyle.accentColor.opacity(0.15)).frame(width: 32, height: 32)
-                            Image(systemName: "sparkles")
-                                .foregroundColor(viewModel.presentationStyle.accentColor)
-                                .font(.system(size: 14, weight: .bold))
-                        }
-                        Text("Sparkle 配置")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.9))
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 24)
-                    .padding(.bottom, 20)
-
-                    Divider().background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
-
-                    // Navigation Tab Buttons
-                    ScrollView {
-                        VStack(spacing: 6) {
-                            sidebarTabButton(title: "模型厂商", icon: "server.rack", index: 0)
-                            sidebarTabButton(title: "角色库", icon: "person.text.rectangle", index: 1)
-                            sidebarTabButton(title: "上下文", icon: "brain.head.profile", index: 2)
-                            sidebarTabButton(title: "热键配置", icon: "keyboard", index: 3)
-                            sidebarTabButton(title: "外观呈现", icon: "paintpalette", index: 4)
-                            sidebarTabButton(title: "隐私安全", icon: "shield.fill", index: 5)
-                            sidebarTabButton(title: "高级设置", icon: "gearshape.2", index: 6)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 16)
-                    }
-
-                    Spacer()
-
-                    Divider().background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
-
-                    // Status indicator
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(viewModel.activeStatusColor.opacity(viewModel.presentationStyle.textOpacityMultiplier))
-                            .frame(width: 6, height: 6)
-                        Text(viewModel.activeStatusText)
-                            .font(.system(size: 11))
-                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.42))
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 16)
-                }
-                .frame(width: 160)
-                .background(viewModel.presentationStyle.secondaryTextColor.opacity(0.02))
-
-                // Vertical Divider Line
-                Rectangle()
-                    .fill(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
-                    .frame(width: 1)
-
-                // Right Content Pane
-                VStack(alignment: .leading, spacing: 0) {
-                    // Close button row (discreetly placed)
-                    HStack {
-                        Spacer()
-                        Button(action: { viewModel.showSettings = false }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 16))
-                                .foregroundStyle(viewModel.presentationStyle.secondaryTextColor.opacity(0.3))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 16)
-
-                    // Content Area
-                    ZStack {
-                        switch selectedTab {
-                        case 0: AIProvidersTab(viewModel: viewModel)
-                        case 1: AIRolesTab(viewModel: viewModel)
-                        case 2: AIContextTab(viewModel: viewModel)
-                        case 3: HotkeysSettingsTab(viewModel: viewModel)
-                        case 4: AppearanceSettingsTab(viewModel: viewModel)
-                        case 5: PrivacySettingsTab(viewModel: viewModel)
-                        case 6: AdvancedSettingsTab(viewModel: viewModel)
-                        default: EmptyView()
-                        }
-                    }
-                    .frame(height: 440)
-
-                    Divider().background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
-
-                    // Footer actions
-                    HStack {
-                        if selectedTab == 3 {
-                            Button("恢复默认快捷键") {
-                                viewModel.resetShortcutsToDefault()
-                            }
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.4))
-                            .buttonStyle(.plain)
-                        }
-
-                        Spacer()
-
-                        if viewModel.showSaveStatus {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(viewModel.isPrivacyMode ? viewModel.presentationStyle.accentColor : .green)
-                                    .font(.system(size: 12))
-                                Text("已保存")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundColor(viewModel.isPrivacyMode ? viewModel.presentationStyle.secondaryTextColor : .green)
-                            }
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .padding(.trailing, 8)
-                        }
-
-                        Button("完成并保存") {
-                            viewModel.saveShortcuts()
-                            Task { await viewModel.saveAISettings() }
-                            viewModel.notifySaveSuccess()
-
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                viewModel.showSettings = false
-                            }
-                        }
-                        .font(.system(size: 13, weight: .bold))
-                        .buttonStyle(.borderedProminent)
-                        .tint(viewModel.presentationStyle.accentColor)
-                        .controlSize(.regular)
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 14)
-                }
-                .frame(width: 520)
-                .background(viewModel.presentationStyle.backgroundColor.opacity(0.12))
+            ZStack {
+                scrim
+                settingsPanel(metrics: metrics)
             }
-            .contentShape(Rectangle())
-            .frame(width: 681, height: 540)
-            .background {
-                ZStack {
-                    viewModel.presentationStyle.backgroundColor.opacity(viewModel.bgOpacity)
-                    if !viewModel.isPrivacyMode {
-                        Rectangle().fill(.ultraThinMaterial)
-                    }
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.panelBorderOpacity), lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(viewModel.presentationStyle.shadowOpacity * 0.5), radius: viewModel.presentationStyle.shadowRadius * 10, x: 0, y: viewModel.presentationStyle.shadowYOffset * 15)
-            .onDisappear {
-                viewModel.saveShortcuts()
-                Task { await viewModel.saveAISettings() }
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    private func sidebarTabButton(title: String, icon: String, index: Int) -> some View {
+    private var scrim: some View {
+        viewModel.presentationStyle.backgroundColor
+            .opacity(max(0.7, viewModel.bgOpacity * (viewModel.isPrivacyMode ? 1.0 : viewModel.presentationStyle.panelOpacityMultiplier)))
+            .ignoresSafeArea()
+            .onTapGesture { viewModel.showSettings = false }
+    }
+
+    private func settingsPanel(metrics: SettingsOverlayMetrics) -> some View {
+        HStack(spacing: 0) {
+            sidebar(metrics: metrics)
+
+            Rectangle()
+                .fill(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
+                .frame(width: 1)
+
+            contentPane(metrics: metrics)
+        }
+        .contentShape(Rectangle())
+        .frame(width: metrics.width, height: metrics.height)
+        .background {
+            ZStack {
+                viewModel.presentationStyle.backgroundColor.opacity(viewModel.bgOpacity)
+                if !viewModel.isPrivacyMode {
+                    Rectangle().fill(.ultraThinMaterial)
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.panelBorderOpacity), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(viewModel.presentationStyle.shadowOpacity * 0.5), radius: viewModel.presentationStyle.shadowRadius * 10, x: 0, y: viewModel.presentationStyle.shadowYOffset * 15)
+        .onDisappear {
+            viewModel.saveShortcuts()
+            Task { await viewModel.saveAISettings() }
+        }
+    }
+
+    private func sidebar(metrics: SettingsOverlayMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(viewModel.presentationStyle.accentColor.opacity(0.15))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "sparkles")
+                        .foregroundColor(viewModel.presentationStyle.accentColor)
+                        .font(.system(size: 14, weight: .bold))
+                }
+                if metrics.showsSidebarLabels {
+                    Text("Sparkle 配置")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.9))
+                }
+            }
+            .padding(.horizontal, metrics.showsSidebarLabels ? 16 : 12)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
+
+            Divider().background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
+
+            ScrollView {
+                VStack(spacing: 6) {
+                    sidebarTabButton(title: "模型厂商", icon: "server.rack", index: 0, showsTitle: metrics.showsSidebarLabels)
+                    sidebarTabButton(title: "角色库", icon: "person.text.rectangle", index: 1, showsTitle: metrics.showsSidebarLabels)
+                    sidebarTabButton(title: "上下文", icon: "brain.head.profile", index: 2, showsTitle: metrics.showsSidebarLabels)
+                    sidebarTabButton(title: "热键配置", icon: "keyboard", index: 3, showsTitle: metrics.showsSidebarLabels)
+                    sidebarTabButton(title: "外观呈现", icon: "paintpalette", index: 4, showsTitle: metrics.showsSidebarLabels)
+                    sidebarTabButton(title: "隐私安全", icon: "shield.fill", index: 5, showsTitle: metrics.showsSidebarLabels)
+                    sidebarTabButton(title: "高级设置", icon: "gearshape.2", index: 6, showsTitle: metrics.showsSidebarLabels)
+                }
+                .padding(.horizontal, metrics.showsSidebarLabels ? 12 : 8)
+                .padding(.vertical, 16)
+            }
+
+            Spacer()
+
+            Divider().background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(viewModel.activeStatusColor.opacity(viewModel.presentationStyle.textOpacityMultiplier))
+                    .frame(width: 6, height: 6)
+                if metrics.showsSidebarLabels {
+                    Text(viewModel.activeStatusText)
+                        .font(.system(size: 11))
+                        .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.42))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, metrics.showsSidebarLabels ? 16 : 25)
+            .padding(.vertical, 16)
+        }
+        .frame(width: metrics.sidebarWidth)
+        .background(viewModel.presentationStyle.secondaryTextColor.opacity(0.02))
+    }
+
+    private func contentPane(metrics: SettingsOverlayMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Spacer()
+                Button(action: { viewModel.showSettings = false }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(viewModel.presentationStyle.secondaryTextColor.opacity(0.3))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, metrics.contentPadding)
+            .padding(.top, 16)
+
+            tabContent
+                .frame(height: metrics.contentHeight)
+
+            Divider().background(viewModel.presentationStyle.secondaryTextColor.opacity(viewModel.presentationStyle.dividerOpacity))
+
+            footer
+                .padding(.horizontal, metrics.contentPadding)
+                .padding(.vertical, 14)
+        }
+        .frame(width: metrics.contentWidth)
+        .background(viewModel.presentationStyle.backgroundColor.opacity(0.12))
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selectedTab {
+        case 0: AIProvidersTab(viewModel: viewModel)
+        case 1: AIRolesTab(viewModel: viewModel)
+        case 2: AIContextTab(viewModel: viewModel)
+        case 3: HotkeysSettingsTab(viewModel: viewModel)
+        case 4: AppearanceSettingsTab(viewModel: viewModel)
+        case 5: PrivacySettingsTab(viewModel: viewModel)
+        case 6: AdvancedSettingsTab(viewModel: viewModel)
+        default: EmptyView()
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            if selectedTab == 3 {
+                Button("恢复默认快捷键") {
+                    viewModel.resetShortcutsToDefault()
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.4))
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            if viewModel.showSaveStatus {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(viewModel.isPrivacyMode ? viewModel.presentationStyle.accentColor : .green)
+                        .font(.system(size: 12))
+                    Text("已保存")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(viewModel.isPrivacyMode ? viewModel.presentationStyle.secondaryTextColor : .green)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.trailing, 8)
+            }
+
+            Button("完成并保存") {
+                viewModel.saveShortcuts()
+                Task { await viewModel.saveAISettings() }
+                viewModel.notifySaveSuccess()
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    viewModel.showSettings = false
+                }
+            }
+            .font(.system(size: 13, weight: .bold))
+            .buttonStyle(.borderedProminent)
+            .tint(viewModel.presentationStyle.accentColor)
+            .controlSize(.regular)
+        }
+    }
+
+    private func sidebarTabButton(title: String, icon: String, index: Int, showsTitle: Bool) -> some View {
         Button(action: {
             withAnimation(.easeInOut(duration: 0.15)) {
                 selectedTab = index
@@ -188,11 +211,13 @@ struct SettingsOverlay: View {
                     .foregroundColor(selectedTab == index ? viewModel.presentationStyle.accentColor : viewModel.presentationStyle.secondaryTextColor.opacity(0.5))
                     .frame(width: 18)
 
-                Text(title)
-                    .font(.system(size: 13, weight: selectedTab == index ? .semibold : .medium))
-                    .foregroundColor(selectedTab == index ? viewModel.presentationStyle.secondaryTextColor : viewModel.presentationStyle.secondaryTextColor.opacity(0.65))
+                if showsTitle {
+                    Text(title)
+                        .font(.system(size: 13, weight: selectedTab == index ? .semibold : .medium))
+                        .foregroundColor(selectedTab == index ? viewModel.presentationStyle.secondaryTextColor : viewModel.presentationStyle.secondaryTextColor.opacity(0.65))
 
-                Spacer()
+                    Spacer()
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -208,6 +233,27 @@ struct SettingsOverlay: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(title)
+    }
+}
+
+private struct SettingsOverlayMetrics {
+    let width: CGFloat
+    let height: CGFloat
+    let sidebarWidth: CGFloat
+    let contentWidth: CGFloat
+    let contentHeight: CGFloat
+    let contentPadding: CGFloat
+    let showsSidebarLabels: Bool
+
+    init(containerSize: CGSize) {
+        width = min(700, max(420, containerSize.width - 32))
+        height = min(560, max(420, containerSize.height - 40))
+        showsSidebarLabels = width >= 540
+        sidebarWidth = showsSidebarLabels ? min(160, width * 0.25) : 58
+        contentWidth = width - sidebarWidth - 1
+        contentHeight = max(300, height - 100)
+        contentPadding = width < 560 ? 16 : 24
     }
 }
 
@@ -759,7 +805,49 @@ private struct PrivacySettingsTab: View {
                         if viewModel.isPrivacyMode {
                             privacySliderRow(title: "防窥模糊", subtitle: "统一作用于主文本、剧本库与浮层控件", value: $viewModel.privacyBlurRadius, range: 0...3.0, suffix: "pt")
 
+                            HStack(alignment: .center) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("改变样式")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.9))
+                                    Text("降低可见度、隐藏控件边框等")
+                                        .font(.system(size: 11)).foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.4))
+                                }
+                                Spacer()
+                                Toggle("", isOn: $viewModel.privacyChangeStyle)
+                            }
+
                             Divider().opacity(0.05)
+                        }
+
+                        Divider().opacity(0.05)
+
+                        let ghostMinutesBinding = Binding<Double>(
+                            get: { viewModel.ghostModeDuration / 60.0 },
+                            set: { newValue in
+                                viewModel.ghostModeDuration = newValue * 60.0
+                                viewModel.saveVisualSettings()
+                            }
+                        )
+
+                        HStack(alignment: .center, spacing: 14) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("穿透锁定时间")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.82))
+                                Text("设置每次启动锁定会话的持续时长")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.42))
+                            }
+                            Spacer()
+                            Slider(value: ghostMinutesBinding, in: 1...150, step: 1)
+                                .frame(width: 145)
+                                .tint(viewModel.presentationStyle.accentColor)
+                                .disabled(viewModel.mousePenetration || viewModel.isGhostModePending)
+                            Text("\(Int(viewModel.ghostModeDuration / 60.0)) 分钟")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(viewModel.presentationStyle.secondaryTextColor.opacity(0.6))
+                                .frame(width: 60, alignment: .trailing)
                         }
 
                         Divider().opacity(0.05)

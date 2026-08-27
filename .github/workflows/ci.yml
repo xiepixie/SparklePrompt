@@ -8,15 +8,29 @@ on:
 
 jobs:
   build:
+    name: Build & Package Check
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
 
       - name: Show toolchain
-        run: swift --version
+        run: |
+          xcodebuild -version
+          swift --version
 
-      - name: Build (debug)
+      - name: Build debug
         run: swift build
 
-      - name: Build (release, native arch)
-        run: swift build -c release
+      - name: Build & Package App (.app & .zip)
+        run: ./package-release.sh
+
+      - name: Upload CI Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SparklePrompt-CI-Build
+          path: .build/release-package/*.zip
+          retention-days: 14

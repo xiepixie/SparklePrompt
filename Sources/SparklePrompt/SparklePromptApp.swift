@@ -92,6 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setHideFromCapture(startsPrivate)
         setStealthMode(startsPrivate)
 
+        // Sync initial mouse penetration state
+        viewModel.updateWindowInteractionState()
+
         if startsPrivate {
             window.orderFrontRegardless()
         } else {
@@ -127,6 +130,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 2. 修改应用激活策略
         NSApp.setActivationPolicy(isStealth ? .accessory : .regular)
+
+        // 3. 隐私模式下禁用调整大小（避免鼠标滑过边缘时显示双向箭头光标暴露窗口）
+        if isStealth {
+            window.styleMask.remove(.resizable)
+        } else {
+            window.styleMask.insert(.resizable)
+        }
 
         // 退出隐私模式时不强制激活应用和窗口，避免暴露
 
